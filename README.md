@@ -2,4 +2,4 @@
 
 ## Instalación
 
-git clone <url-del-repo>
+git clone <https://github.com/Candelariaarolon/ingsoft3-tp01.git>
