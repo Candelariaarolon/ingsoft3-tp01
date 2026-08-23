@@ -28,3 +28,53 @@ un screenshot de lo que estaba pasando en mi pantalla asi me daba un double chec
 o si era correcto tocar el botón que queria tocar como siguiente paso.me dejaba tranquila porque se que capaz toco algo mal y tengo que volver a
 hacer todo de nuevo por no chequear doble. No le pedí que tomara decisiones de contenido por mí, el título elegido en el conflicto, los nombres 
 de rama y los mensajes de commit los decidí yo. 
+
+
+## TP2 — Elección de la app
+
+### Qué elegí y por qué
+
+Adapté un proyecto propio (Curatta, una app de moda que tenía armada de antes) en un
+marketplace de ropa entre usuarios: cada usuario publica prendas y puede buscar prendas
+parecidas subiendo una foto, comparando contra las publicaciones de otros usuarios con
+Azure OpenAI Vision.
+
+Elegí adaptar un proyecto mío en vez de arrancar de cero porque ya conocía el código de
+memoria y no partía de cero en nada — pero tuve que sacarle todas las integraciones
+externas que no aportaban a la materia (Tiendanube, Mercado Libre, Pinterest) y construir
+de cero el CRUD de publicaciones, que es lo que hoy sostiene las reglas de negocio del TP5.
+
+### Contra los criterios de elección
+
+- **¿Buildea y corre localmente hoy?** Sí — lo probé clonando el repo en una carpeta
+  aislada y levantándolo solo con `docker-compose.yml` + un `.env` nuevo, sin tocar código
+  ni pasos manuales.
+- **¿Tiene o le puedo escribir tests?** Todavía no tiene tests escritos, pero
+  tiene las reglas para poder escribirlos con comodidad.
+- **Tamaño:** CRUD completo de publicaciones + 3 pantallas (buscar por foto, mis
+  publicaciones, nueva publicación).
+
+### Arquitectura
+
+`backend/` (API, Node/Next.js) y `frontend/` (páginas, Node/Next.js) son dos servicios
+independientes, cada uno con su Dockerfile, orquestados con `docker-compose.yml` junto a
+Postgres. El frontend nunca le pega directo a la base — todo pasa por el backend.
+
+Para que el browser nunca necesite conocer la ubicación del backend (y así no hacer falta
+CORS), el frontend usa `rewrites()` de Next.js para reenviar `/api/*` al backend del lado
+del servidor — el mismo problema y la misma solución que resolvería un `proxy_pass` de
+nginx delante de una SPA, pero con el mecanismo propio de Next.js. La diferencia real que
+quiero dejar anotada: nginx resuelve el destino del proxy en cada request (en runtime), así
+que la misma imagen sirve en cualquier entorno solo cambiando variables de entorno. El
+`rewrites()` de Next.js resuelve el destino una sola vez, en el build de la imagen — así
+que para apuntar el mismo frontend a un backend distinto (QA vs prod) hace falta
+rebuildear la imagen con un build arg distinto, no alcanza con cambiar una variable de
+entorno al arrancar el contenedor. Sigue sin haber CORS ni URL absoluta en el código del
+browser, pero la portabilidad entre entornos no es tan directa como con nginx.
+
+### Dependencia externa: Azure OpenAI
+
+El matching por foto depende de Azure OpenAI Vision, una API paga de terceros — ya lo
+hablé con el profesor. El resto de la app (publicar, editar, borrar, marcar como vendida)
+no depende de esto: si las credenciales no están configuradas, esas funciones siguen
+andando normal y solo la búsqueda por foto muestra un error en vez de resultados.
