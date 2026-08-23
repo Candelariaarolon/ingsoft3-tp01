@@ -1,0 +1,47 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String        @id @default(cuid())
+  email         String        @unique
+  passwordHash  String
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  publicaciones Publicacion[]
+}
+
+enum EstadoPublicacion {
+  disponible
+  vendida
+}
+
+model Publicacion {
+  id        String            @id @default(cuid())
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nombre    String
+  precio    Int
+  foto      String
+  estado    EstadoPublicacion @default(disponible)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  // Atributos de moda calculados una sola vez, al crear la publicación (ver
+  // lib/moda-taxonomia.ts), para que buscar por foto no tenga que volver a
+  // llamar a Azure OpenAI por cada publicación existente en cada búsqueda.
+  // Nullable porque el análisis es best-effort: si falla al crear, la
+  // publicación igual se guarda y solo queda afuera del matching hasta que
+  // se re-analice.
+  tipoPrenda       String?
+  siluetaCorte     String?
+  patron           String?
+  familiaColor     String?
+  texturaTela      String?
+  formalidadEstilo String?
+}
