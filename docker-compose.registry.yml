@@ -13,7 +13,7 @@ services:
       retries: 10
 
   backend:
-    build: ./backend
+    image: ghcr.io/candelariaarolon/curatta-backend:v0.1.0     # ← antes: build: ./backend
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/curatta
       JWT_SECRET: ${JWT_SECRET}
@@ -25,10 +25,6 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      # node:20-slim no trae curl ni wget — Node ya está, así que el
-      # healthcheck lo hace con el http nativo. /api/auth/me no requiere
-      # sesión y siempre responde 200, sirve como "¿el server ya escucha?"
-      # sin depender de datos ni de una cuenta de prueba.
       test:
         [
           "CMD",
@@ -42,10 +38,7 @@ services:
       start_period: 10s
 
   frontend:
-    build:
-      context: ./frontend
-      args:
-        BACKEND_URL: http://backend:4000
+    image: ghcr.io/candelariaarolon/curatta-frontend:v0.1.0    # ← antes: build: ./frontend
     environment:
       JWT_SECRET: ${JWT_SECRET}
       BACKEND_URL: http://backend:4000
