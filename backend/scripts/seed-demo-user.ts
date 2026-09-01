@@ -5,17 +5,17 @@ import { prisma } from "../lib/prisma";
 import { hashPassword } from "../lib/password";
 
 const CUENTAS = [
-  { email: "demo@curatta.test", password: "curatta123" },
-  { email: "demo2@curatta.test", password: "curatta123" },
+  { email: "demo@curatta.test", password: "curatta123", telefono: "541122334455" },
+  { email: "demo2@curatta.test", password: "curatta123", telefono: "541122334456" },
 ];
 
 async function main() {
-  for (const { email, password } of CUENTAS) {
+  for (const { email, password, telefono } of CUENTAS) {
     const passwordHash = await hashPassword(password);
     await prisma.user.upsert({
       where: { email },
-      update: { passwordHash },
-      create: { email, passwordHash },
+      update: { passwordHash, telefono },
+      create: { email, passwordHash, telefono },
     });
     console.log(`Usuario listo -> email: ${email}  password: ${password}`);
   }

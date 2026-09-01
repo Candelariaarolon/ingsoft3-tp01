@@ -6,6 +6,7 @@ import TexturedSection from "@/components/TexturedSection";
 
 export default function RegistroPage() {
   const [email, setEmail] = useState("");
+  const [telefono, setTelefono] = useState("");
   const [password, setPassword] = useState("");
   const [confirmar, setConfirmar] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -25,7 +26,7 @@ export default function RegistroPage() {
       const res = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, telefono }),
       });
       const data = (await res.json()) as { error?: string };
 
@@ -65,6 +66,25 @@ export default function RegistroPage() {
               className="border border-carbon/30 bg-blanco-roto px-4 py-3 text-sm text-carbon outline-none transition duration-300 ease-in-out focus:border-carbon"
               style={{ borderRadius: "2px" }}
             />
+          </label>
+
+          <label className="flex flex-col gap-2 text-left">
+            <span className="font-sans text-[11px] uppercase tracking-[0.25em] text-carbon/60">
+              Teléfono
+            </span>
+            <input
+              type="tel"
+              required
+              value={telefono}
+              onChange={(e) => setTelefono(e.target.value)}
+              placeholder="Ej: 54 11 2233-4455"
+              className="border border-carbon/30 bg-blanco-roto px-4 py-3 text-sm text-carbon outline-none transition duration-300 ease-in-out focus:border-carbon"
+              style={{ borderRadius: "2px" }}
+            />
+            <span className="text-xs text-carbon/50">
+              Código de país + área + número, sin 0 ni 15. Lo van a usar para contactarte por
+              WhatsApp.
+            </span>
           </label>
 
           <label className="flex flex-col gap-2 text-left">
