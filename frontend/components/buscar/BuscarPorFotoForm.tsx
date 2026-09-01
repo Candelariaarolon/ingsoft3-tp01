@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { formatARS } from "@/lib/format";
+import { linkWhatsapp } from "@/lib/whatsapp";
 
 type PublicacionMatch = {
   id: string;
@@ -9,6 +10,7 @@ type PublicacionMatch = {
   precio: number;
   foto: string;
   score: number;
+  user: { telefono: string };
 };
 
 type BuscarResponse = {
@@ -113,9 +115,19 @@ export default function BuscarPorFotoForm() {
                   {Math.round(p.score)}% de coincidencia
                 </p>
                 <h4 className="mb-1.5 text-[13.5px] text-negro">{p.nombre}</h4>
-                <p className="font-serif text-[15px] font-semibold text-negro">
+                <p className="mb-2 font-serif text-[15px] font-semibold text-negro">
                   {formatARS(p.precio)}
                 </p>
+                {p.user.telefono && (
+                  <a
+                    href={linkWhatsapp(p.user.telefono, p.nombre)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block rounded-sm border border-negro px-3 py-1.5 text-[11px] uppercase tracking-[0.15em] text-negro transition-opacity duration-300 ease-in-out hover:opacity-70"
+                  >
+                    Contactar a la vendedora
+                  </a>
+                )}
               </div>
             </article>
           ))}

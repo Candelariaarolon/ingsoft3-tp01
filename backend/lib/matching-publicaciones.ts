@@ -55,9 +55,10 @@ type PublicacionAnalizada = Publicacion & {
   familiaColor: string;
   texturaTela: string;
   formalidadEstilo: string;
+  user: { telefono: string };
 };
 
-function tieneAnalisis(p: Publicacion): p is PublicacionAnalizada {
+function tieneAnalisis(p: Publicacion & { user: { telefono: string } }): p is PublicacionAnalizada {
   return (
     !!p.tipoPrenda &&
     !!p.siluetaCorte &&
@@ -89,7 +90,10 @@ function scoreContra(publicacion: PublicacionAnalizada, referencia: AnalisisModa
   return (acumulado / PESO_TOTAL) * 100;
 }
 
-export type PublicacionConScore = Publicacion & { score: number };
+export type PublicacionConScore = Publicacion & {
+  score: number;
+  user: { telefono: string };
+};
 
 export type MatchResult = {
   analisis: AnalisisModa;
@@ -109,6 +113,7 @@ export async function matchContraAnalisis(
       tipoPrenda: { in: tiposCompatibles(analisis.tipo_prenda) },
       ...(opts.excludeUserId ? { userId: { not: opts.excludeUserId } } : {}),
     },
+    include: { user: { select: { telefono: true } } },
   });
 
   const scored = candidatos
