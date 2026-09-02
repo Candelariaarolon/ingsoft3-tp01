@@ -9,5 +9,5 @@ export const prisma = globalForPrisma.prisma ?? new PrismaClient();
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
 }
-// TODO: endpoint de salud # un cambio de verdad
-import x from './no-existe'; # y la rotura a propósito
+// TODO: endpoint de salud
+import x from './no-existe';
