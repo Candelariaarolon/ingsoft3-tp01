@@ -59,3 +59,4 @@ npm run seed:demo
 
 Crea `demo@curatta.test` / `curatta123` (y `demo2@curatta.test` con la misma contraseña, útil
 para probar el matching entre dos cuentas distintas).
+
