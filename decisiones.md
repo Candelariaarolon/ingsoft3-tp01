@@ -183,8 +183,26 @@ Esto no es solo teórico porque cuando rompí a propósito un import inexistente
 
 - **Docker Desktop no estaba corriendo al querer verificar el build local.** Al correr `docker build ./backend` para confirmar la rotura también en mi máquina (como pide la consigna), Docker devolvió `Cannot connect to the Docker daemon`. No era un problema del ejercicio, sino que no tenía la app de Docker Desktop abierta.
 
+## 5. Baja de Tienda Nube y contacto por WhatsApp
+
+Le saqué a la app la integración con Tienda Nube por lo recomendado por la cátedra, para no depender de una integración de terceros que no aportaba a la materia (mismo criterio que ya había aplicado en el TP2 al sacar Pinterest y Mercado Libre). Al sacarla me quedó un gap real: sin ella, no había ninguna forma de que quien quiere comprar una prenda se contacte con quien la publicó.
+
+Lo resolví agregando el teléfono como dato obligatorio del registro (`backend/app/api/auth/signup/route.ts`), normalizado a solo dígitos con código de país y sin "+" (`normalizarTelefono` en `backend/lib/telefono.ts`) y validado contra un rango de 8 a 15 dígitos antes de crear el usuario. Con ese dato, cada resultado de búsqueda por foto muestra un botón que arma un link `wa.me` directo a esa conversación (`linkWhatsapp` en `frontend/lib/whatsapp.ts`, usado en `BuscarPorFotoForm.tsx`), con un mensaje pre-cargado que menciona la prenda puntual que el comprador estaba mirando.
+
+Elegí el link `wa.me` ("click to chat") en vez de la API de WhatsApp Business a propósito: es un link plano, no requiere cuenta de negocio ni credenciales ni costo — mismo principio que ya venía aplicando de evitar dependencias de terceros pagas o innecesarias para lo que pide la materia.
+
+Como este cambio tocaba algo ya entregado y documentado en el TP2 (las imágenes en GHCR bajo `v0.1.0`), antes de avanzar le pedí el visto bueno al profesor por privado, mismo criterio que usé para Azure OpenAI Vision en el TP2. Confirmó que el razonamiento era correcto y dio el ok para avanzar.
+
+### Actualización de las imágenes publicadas
+
+Construí y pusheé las imágenes de backend y frontend a GHCR bajo el tag `v4.0.0`, sin tocar `v0.1.0` (los tags de un mismo repositorio en GHCR son inmutables mientras no se vuelva a pushear a ese tag puntual, así que `v0.1.0` — la evidencia del TP2 — queda intacta). Actualicé `docker-compose.registry.yml` para que apunte a `v4.0.0` en vez de `v0.1.0`, y repetí la misma prueba de visibilidad pública que había hecho en el TP2: deslogueada de GHCR (`docker logout`), sin la imagen en el disco local (`docker rmi`), un `docker pull` de `curatta-backend:v4.0.0` bajó la imagen completa sin pedir credenciales.
+
+Los tags de git de este repo van `v1.0.0` → `v3.0.0` → `v4.0.0`: salteé `v2.0.0` a propósito, ya indicado así por el profesor con anterioridad.
+
 ## Declaración de uso de IA
 
 Usé Claude principalmente para traducir los comandos de ejemplo del profesor (pensados para .NET/`Program.cs`) a mi stack (Next.js/TypeScript, `backend/lib/prisma.ts`), y para que me explicara, con mis propias ramas y PRs como ejemplo, conceptos que no me quedaban claros de la guía (por qué hacen falta dos PRs abiertos a la vez para ver el botón *Update branch*, la diferencia entre el check de rama desactualizada y el comentario "Outdated" de Copilot). Todos los comandos de git/gh los corrí yo misma (excepto ese problema mencionado abajo) desde la terminal: prefiero eso porque veo el output y puedo pegarlo de vuelta o arreglar lo que necesite si algo no coincide con las respuestas o salidas de la maquina del profe.
 
 Problema que tuve con uso de IA, el chat de claude code en visual studio: en un momento del TP le pedí a Claude una revisión/verificación del estado del repo, y en respuesta ejecutó por su cuenta un comando en la parte de cache que yo no le había pedido, cambiando de rama en mi checkout local sin que se lo indicara. Lo interrumpí con un "NO HAGAS NADA" apenas lo vi. Ya le había pedido explícitamente antes que no ejecutara acciones y se limitara a darme los comandos para correr yo misma, y en ese momento no lo respetó. Después de eso volvió a comportarse como se le pidió: solo research de lectura (`git status`, `grep`, leer archivos) para poder darme comandos correctos, sin volver a ejecutar nada que cambiara el estado del repo.
+
+**Excepción explícita, para la actualización a `v4.0.0` de la sección 5:** ahí sí le pedí a Claude que corriera el build y el push a GHCR por su cuenta, después de confirmar puntualmente con él que ninguna acción de git (commit, push, nada "definitivo" al repo) quedaba incluida en ese permiso — eso lo sigo haciendo yo a mano. La distinción que mantengo es esa: acciones sobre el registry de imágenes las puede ejecutar Claude si se lo pido explícitamente para ese caso puntual, acciones sobre git las hago siempre yo.
