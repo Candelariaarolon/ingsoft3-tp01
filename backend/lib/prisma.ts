@@ -10,4 +10,3 @@ if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
 }
 // TODO: endpoint de salud
-import x from './no-existe';
