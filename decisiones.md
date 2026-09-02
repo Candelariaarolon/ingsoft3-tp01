@@ -151,3 +151,40 @@ Está mal escrita porque habla desde el punto de vista del desarrollador, no del
 ## 5. Declaración de uso de IA
 
 Usé Claude sobre todo para verificar, no para generar. El TP lo hice de forma manual, siguiendo paso a paso los mismos comandos que dio el profesor en la guía. A diferencia del TP2 (Docker), acá los comandos con `gh` no dependen del stack de mi aplicación sino que son genéricos a cualquier repositorio de GitHub, así que no tenía sentido pedirle ayuda "a medida" como en el TP2. Lo usé para mostrarle capturas de mi board en GitHub y, más que nada, si no encontraba alguna opción a la vista, para que me ayude a saber dónde estaba cierto botón.
+
+---
+
+# TP4: Integración continua
+
+## 1. Estructura del pipeline
+
+Dos jobs, `build-backend` y `build-frontend`, sin `needs:` entre ellos, así que GitHub Actions los agenda en paralelo en dos runners distintos. Elegí esa separación porque refleja la separación real de mi app: `backend/` y `frontend/` son dos servicios independientes en `docker-compose.yml`, cada uno con su propio Dockerfile y su propio build context, que ya venían desacoplados desde el TP2. No tenía sentido meterlos en un solo job secuencial: no hay ninguna dependencia real entre construir la imagen del backend y construir la del frontend, así que hacerlo en serie solo sumaría tiempo de espera sin ganar nada.
+La otra razón para separarlos en dos jobs (y no un solo job con dos steps) es la señal que da el PR: cada job es un check independiente y requerido. Si algo rompe, veo de entrada cuál de las dos imágenes falló (`CI / build-backend` o `CI / build-frontend`) sin tener que abrir el log. Con un solo job monolítico, un fallo del frontend hubiera dejado en rojo un check que dice "build" a secas, y tendría que entrar igual a leer el log para saber cuál de los dos componentes rompió.
+
+## 2. Cache
+
+Cada job usa `docker/build-push-action` con `cache-from`/`cache-to: type=gha`, y un `scope` distinto por servicio (`scope: backend`, `scope: frontend`). Esto usa el cache de GitHub Actions como backend de cache de BuildKit, separado por scope para que el cache del backend y el del frontend no se pisen entre sí (son capas completamente distintas, de Dockerfiles distintos).
+
+Lo que se reutiliza en la práctica son las capas de BuildKit anteriores al `COPY . .`: el pull de la imagen base (`node:20-slim`) y, sobre todo, la capa de `RUN npm install`, porque el Dockerfile (heredado del TP2) copia `package.json`/`package-lock.json` (y `prisma/` en el backend) *antes* de copiar el resto del código. Mientras no cambien las dependencias, esa capa se reutiliza intacta aunque cambie código de la app. Lo que **no** se cachea de forma útil es todo lo que viene después: `COPY . .`, `RUN npm run build` y el copiado a la etapa final se vuelven a ejecutar en cada build, porque dependen del contenido del código fuente, que cambia en cada commit.
+
+Si el cache desapareciera (primera corrida del pipeline, cache expirado por falta de uso, o un cambio de `scope`), el pipeline no se rompe: `cache-from` simplemente no encuentra nada que reusar y Buildx hace el build completo desde cero (pull de la imagen base, `npm install` entero, `npm run build` entero). Es más lento, pero sigue siendo correcto — el cache es una optimización de velocidad, no algo de lo que dependa la corrección del build.
+
+## 3. Por qué construye con mi Dockerfile en vez de compilar por su cuenta
+
+Mi app ya se construye de una manera: el Dockerfile de cada servicio (backend y frontend), armado en el TP2. El pipeline no inventa otra forma de construir la app sino que usa ese mismo Dockerfile porque si el pipeline compilara por su cuenta con `npm` directamente, tendría dos definiciones de build para lo mismo, y esas dos definiciones tarde o temprano divergen lo que significa que alguien cambia la versión de Node o agrega una dependencia del sistema en el Dockerfile (como el `openssl` que necesita Prisma) y se olvida de reflejarlo en el CI y terminaría verificando una compilación distinta de la que después despliego.
+
+Esto no es solo teórico porque cuando rompí a propósito un import inexistente en `backend/lib/prisma.ts`, el check que se puso en rojo fue exactamente `CI / build-backend`, porque ese job corre `docker build ./backend` de verdad, el mismo comando que hubiera fallado si yo intentaba buildear esa imagen para deployarla.
+
+## 4. Problemas encontrados
+
+- **Comentarios `#` al final de línea en zsh y confusion porque seguia roto despues del fix para los comentarios** Usé varios comandos que copiaba y pegaba con comentarios inline (`echo '...' >> archivo   # explicación`) asumiendo el comportamiento de bash, donde `#` descarta el resto de la línea. Tenia abierta la terminal zsh, que no trata `#` como comentario entonces el texto del comentario quedo como contenido real dentro de `backend/lib/prisma.ts`. Se resuelve evitando comentarios `#` al final de línea en zsh, o activando esa opción en el `.zshrc`. Por eso es que hay un fix de mas. Después de sacar el texto que estaba de mas, hice un commit `fix: saco basura que se coló por comentarios de zsh` y ese commit solo limpiaba el accidente de shell, no arreglaba la rotura intencional del pipeline. me asuste porque el check seguía en rojo después de ese commit y pensé que algo andaba mal, cuando en realidad era el comportamiento esperado: todavía no había hecho el commit que saca el `import` roto de verdad.
+
+- **Confundí dos cosas distintas que comparten la palabra "outdated".** GitHub le puso la etiqueta "Outdated" a un comentario de revisión automática de Copilot en el PR de la rotura, porque el código que comentaba ya no existía (lo había borrado en un commit posterior). Yo lo interpreté como si fuera el banner que mencionaba el profe en el tp, el de "esta rama está desactualizada respecto a `main`" (la regla *Require branches to be up to date*) que estaba buscando en el otro PR (el de relleno). Son features completamente distintas de GitHub que casualmente comparten la palabra "outdated": una es sobre un comentario de revisión quedando obsoleto, la otra es sobre una rama quedando desactualizada respecto a la base. El banner real de rama desactualizada solo aparece *después* de mergear el PR que mueve `main`, como lo aclaraba el pdf del profe, no antes.
+
+- **Docker Desktop no estaba corriendo al querer verificar el build local.** Al correr `docker build ./backend` para confirmar la rotura también en mi máquina (como pide la consigna), Docker devolvió `Cannot connect to the Docker daemon`. No era un problema del ejercicio, sino que no tenía la app de Docker Desktop abierta.
+
+## Declaración de uso de IA
+
+Usé Claude principalmente para traducir los comandos de ejemplo del profesor (pensados para .NET/`Program.cs`) a mi stack (Next.js/TypeScript, `backend/lib/prisma.ts`), y para que me explicara, con mis propias ramas y PRs como ejemplo, conceptos que no me quedaban claros de la guía (por qué hacen falta dos PRs abiertos a la vez para ver el botón *Update branch*, la diferencia entre el check de rama desactualizada y el comentario "Outdated" de Copilot). Todos los comandos de git/gh los corrí yo misma (excepto ese problema mencionado abajo) desde la terminal: prefiero eso porque veo el output y puedo pegarlo de vuelta o arreglar lo que necesite si algo no coincide con las respuestas o salidas de la maquina del profe.
+
+Problema que tuve con uso de IA, el chat de claude code en visual studio: en un momento del TP le pedí a Claude una revisión/verificación del estado del repo, y en respuesta ejecutó por su cuenta un comando en la parte de cache que yo no le había pedido, cambiando de rama en mi checkout local sin que se lo indicara. Lo interrumpí con un "NO HAGAS NADA" apenas lo vi. Ya le había pedido explícitamente antes que no ejecutara acciones y se limitara a darme los comandos para correr yo misma, y en ese momento no lo respetó. Después de eso volvió a comportarse como se le pidió: solo research de lectura (`git status`, `grep`, leer archivos) para poder darme comandos correctos, sin volver a ejecutar nada que cambiara el estado del repo.
