@@ -8,9 +8,9 @@ Git resuelve automáticamente cuando los cambios están en líneas distintas del
 
 ## 2. Problemas encontrados y cómo los solucioné
 
-- **Hice un commit en `main` en mi compu para probar si la protección de rama me iba a frenar.** Efectivamente me frenó: intenté hacer push y GitHub lo rechazó. Pero el commit ya existía en mi compu igual, porque el commit se guarda local y recién con `push` se manda al remoto. Entonces aunque el push falló, seguía teniendo ese commit de prueba colgado en mi `main` local, y al principio no me di cuenta que necesitaba sacarlo para que quedara igual al de GitHub. Probé primero con `HEAD~1`, que significa "un commit antes de donde estoy parado", pero depende de contar bien cuántos commits hice de más, y como me confundí contando, me dejó mal. Después usé `git reset --hard origin/main`, que no depende de contar nada: directamente me lleva a donde está `main` en GitHub en ese momento. Por eso fue más segura. Eso sí, `--hard` borra cambios sin guardarlos en ningún lado, así que en mi caso estaba bien porque era un commit descartable, pero si hubiera tenido algo que quería conservar, lo perdía igual.
+- **Hice un commit en `main` para probar que la protección de rama me frenae, pero me olvide de deshacerlo.** Efectivamente me frenó pero el commit se guarda local y recién con `push` se manda al remoto. Entonces aunque el push falló, seguía teniendo ese commit de prueba colgado en mi `main` local, y al principio no me di cuenta que necesitaba sacarlo para que quedara igual al de GitHub. 
 
-- **Se me creó una rama con nombre automático (`Candelariaarolon-patch-1`)** en vez de seguir la convención `feature/`, porque edité el archivo directo desde la interfaz web de GitHub y, como la rama estaba protegida, GitHub me ofreció crear una rama nueva sola con ese nombre genérico. Aprendí a fijarme en ese campo antes de confirmar, porque es editable en el momento y podía haberlo cambiado a algo tipo `feature/descripciondeloqueestabahaciendo` antes de crear el PR.
+- **Se me creó una rama con nombre automático (`Candelariaarolon-patch-1`)** en vez de seguir la convención `feature/`, porque edité el archivo directo desde la interfaz web de GitHub y, como la rama estaba protegida, GitHub me ofreció crear una rama nueva sola con ese nombre genérico. Aprendí a fijarme en ese campo antes de confirmar y podía haberlo cambiado a algo tipo `feature/descripciondeloqueestabahaciendo` antes de crear el PR.
 
 - **Dejé un placeholder sin reemplazar en el primer commit del README.** Al principio pensé que tenía que deshacer todo y volver a armar el PR de cero, como si haber dejado ese error en el primer commit ya lo hubiera arruinado. Pero después me di cuenta de que no hacía falta, porque un PR no es una foto fija de ese primer commit: es un puntero a toda la rama completa. Cualquier commit nuevo que pusheara a esa misma rama se iba a sumar automáticamente al mismo PR ya abierto, como un commit más en la conversación. Por eso, en vez de rehacer todo, solo corregí el placeholder y hice un commit nuevo:
 
@@ -42,7 +42,7 @@ Cuando dudaba de algo de la consigna, le mostraba un screenshot de lo que estaba
 
 Adapté un proyecto propio (Curatta, una app de moda que ya tenía armada) en un marketplace de ropa entre usuarios: inicialmente conectabas tu cuenta de Pinterest y te recomendaba en base a tus tableros de inspiración, pero para evitar usar esa conexión y complicar el proyecto, sin perder el mecanismo de búsqueda de ropa útil, le di una vuelta de rosca que también había pensado para la app original: cada usuario publica prendas y puede buscar prendas parecidas subiendo una foto, comparando contra las publicaciones de otros usuarios con Azure OpenAI Vision.
 
-Elegí adaptar un proyecto mío en vez de arrancar de cero porque ya conocía el código y no partía de cero en nada, pero tuve que sacarle todas las integraciones externas que no aportaban a la materia (Tiendanube, Mercado Libre, Pinterest) y construir de cero el CRUD de publicaciones, que es lo que hoy sostiene las reglas de negocio del TP5. Además, me interesa seguir trabajando sobre este proyecto a futuro.
+Elegí adaptar un proyecto mío en vez de arrancar de cero porque ya conocía el código y no partía de cero en nada, pero tuve que sacarle todas las integraciones externas que no aportaban a la materia (Tiendanube, Mercado Libre, Pinterest) y construir de cero el CRUD de publicaciones. Además, me interesa seguir trabajando sobre este proyecto a futuro.
 
 ### Contra los cinco criterios de la guía
 
@@ -52,8 +52,7 @@ Elegí adaptar un proyecto mío en vez de arrancar de cero porque ya conocía el
 
 - **¿Sé dónde se configura la conexión a la base, y es parametrizable por variable de entorno?** Sí: vive en `backend/prisma/schema.prisma`: `url = env("DATABASE_URL")`. Dice `env` porque no está hardcodeada en ningún lado: para apuntar a otra base (dev, QA, la del contenedor) alcanza con cambiar la variable de entorno, sin tocar código ni recompilar.
 
-- **¿Tiene lógica para testear (TP5)?** Sí, y son reglas reales, no CRUD sin restricciones. Las conté sobre el código actual:
-
+- **¿Tiene lógica para testear (TP5)?** 
   **Backend:**
   - Email único por usuario.
   - El precio debe ser mayor a 0, validado tanto al crear como al editar una publicación.
@@ -71,44 +70,22 @@ Elegí adaptar un proyecto mío en vez de arrancar de cero porque ya conocía el
 
 - **¿La entiendo lo suficiente para modificarla?** Sí, la adapté yo misma partiendo de un proyecto propio.
 
-### Dos consideraciones adicionales
+### Consideraciones adicionales
 
-- **Tamaño:** CRUD completo de publicaciones + 3 pantallas (buscar por foto, mis publicaciones, nueva publicación) — dentro del rango que pide la guía.
 - **Dependencias externas:** la única dependencia no trivial es Azure OpenAI Vision para el matching por foto, ya hablada y autorizada con el profesor. El resto de la app (publicar, editar, borrar, marcar como vendida) no depende de ella: si las credenciales no están configuradas, esas funciones andan normal y solo la búsqueda por foto muestra un error en vez de resultados.
 
 ## 2. Decisiones de contenerización
 
-- **Arquitectura:** `backend/` (API, Node/Next.js) y `frontend/` (páginas, Node/Next.js) son dos servicios independientes, cada uno con su Dockerfile, orquestados con `docker-compose.yml` junto a Postgres. El frontend nunca le pega directo a la base: todo pasa por el backend.
+- **Imágenes base:** `node:20-slim` en las dos etapas de los dos Dockerfiles, en vez de `alpine`. Prisma necesita `openssl` disponible en runtime para su motor de queries, y `alpine` complica esto por usar una libc distinta (musl).
 
-- **Por qué dos etapas (multi-stage):** los dos Dockerfiles tienen una etapa `build` (Node completo, código fuente y todas las dependencias, incluidas las de compilación) y una etapa `final` que arranca de la misma imagen base limpia y solo copia lo que hace falta para correr (`COPY --from=build ...`). La etapa `build` se descarta entera al terminar: no queda código fuente crudo, cache de npm, ni herramientas de compilación en la imagen que termina corriendo. En el frontend esto se nota más porque usa `output: "standalone"` de Next.js: la imagen final ni siquiera tiene `node_modules` completo, solo el subconjunto autocontenido que el server necesita en runtime. En el backend sí se copia `node_modules` entero, porque el `CMD` corre `prisma migrate deploy` al arrancar y necesita el Prisma CLI disponible.
+- **Multi-stage:** cada Dockerfile tiene una etapa `build` (código fuente completo y dependencias de compilación) y una etapa `final` que solo copia lo necesario para correr (`COPY --from=build ...`), así el código crudo y las herramientas de build no viajan a la imagen que termina corriendo. En el frontend esto se nota más porque usa `output: "standalone"` de Next.js (ni siquiera copia `node_modules` completo); en el backend sí se copia entero porque el `CMD` corre `prisma migrate deploy` al arrancar.
 
-- **Ruteo frontend a backend:** para que el browser nunca necesite conocer la ubicación del backend (y así no hacer falta CORS), el frontend usa `rewrites()` de Next.js para reenviar `/api/*` al backend del lado del servidor — el mismo problema y la misma solución que resolvería un `proxy_pass` de nginx delante de una SPA, pero con el mecanismo propio de Next.js.
-
-- **Diferencia importante que quiero dejar anotada:** nginx resuelve el destino del proxy en cada request (runtime), así que la misma imagen sirve en cualquier entorno solo cambiando variables de entorno. El `rewrites()` de Next.js resuelve el destino una sola vez, en el build de la imagen, así que para apuntar el mismo frontend a un backend distinto (QA vs prod) hace falta rebuildear la imagen con un build arg distinto, no alcanza con cambiar una variable de entorno al arrancar el contenedor. Sigue sin haber CORS ni URL absoluta en el código del browser, pero la portabilidad entre entornos no es tan directa como con nginx.
-
-- **Cómo se encuentran los servicios:** además del ruteo HTTP de arriba, `backend` necesita resolver `db` a nivel de red para conectarse a Postgres (`DATABASE_URL=postgresql://postgres:...@db:5432/curatta`). Esto funciona porque Compose crea una red bridge propia por proyecto con DNS interno: cada servicio es resoluble por su *nombre de servicio* dentro de esa red, sin necesidad de IP fija ni configuración extra. Lo verifiqué corriendo `dns.lookup('db')` desde adentro del contenedor `backend`: resolvió a la IP interna del contenedor `db` (`172.18.0.x`), la misma red que usa `frontend` para llegar a `backend` en `http://backend:4000`.
-
-- **Healthcheck vs `depends_on`:** un `depends_on` simple solo espera a que el contenedor *arranque*, no a que el servicio esté *listo* — Postgres puede tardar unos segundos en aceptar conexiones incluso después de que el proceso ya arrancó. Por eso `db` tiene un `healthcheck` (`pg_isready`, cada 5s) y `backend` usa `depends_on: db: condition: service_healthy`, para no levantar hasta que Postgres esté realmente aceptando conexiones. Encadené lo mismo entre `frontend` y `backend`: el backend expone su propio healthcheck (con `node -e` en vez de `curl`, porque `node:20-slim` no trae cliente HTTP instalado) contra una ruta que no depende de datos ni de sesión, y `frontend` espera a que dé `healthy` antes de arrancar. Lo confirmé con `docker inspect --format '{{.State.Health.Status}}'` en los dos contenedores: `healthy`, no solo `running`.
-
-- **Dependencia externa (Azure OpenAI):** el matching por foto depende de Azure OpenAI Vision, una API paga de terceros, hablado y autorizado con el profesor. El resto de la app no depende de esto: si las credenciales no están configuradas, esas funciones siguen andando normal y solo la búsqueda por foto muestra un error en vez de resultados.
-
-- **Imágenes base:** `node:20-slim` en las dos etapas de los dos Dockerfiles, en vez de `alpine`. La razón puntual es del backend: Prisma necesita `openssl` disponible en runtime para su motor de queries (`apt-get install openssl` en el Dockerfile), y alpine complica esto por usar una libc distinta (musl). Mantuve la misma base en el frontend por consistencia, aunque ahí no hay esa dependencia puntual.
-
-- **Dónde viven los secretos:** `POSTGRES_PASSWORD`, `JWT_SECRET` y las credenciales de Azure OpenAI viven únicamente en un `.env` local, ignorado por git (está en `.gitignore`), que Compose lee automáticamente y usa para interpolar `${VAR}` en `docker-compose.yml`. Lo que sí está commiteado es `.env.example`, con las mismas claves vacías, para que cualquiera sepa qué variables completar sin exponer ningún valor real. Confirmé que el secreto llega solo en runtime, nunca copiado a la imagen: `docker compose exec backend sh -c 'echo $DATABASE_URL'` muestra el password real ya interpolado, pero `ls .env` dentro de ese mismo contenedor da "no existe" — el archivo nunca llega a la imagen porque también está en `backend/.dockerignore`.
-
-- **Qué persiste y qué no:** solo la base de datos tiene estado persistente, en un volumen nombrado `/var/lib/postgresql/data`, gestionado por Docker. Backend y frontend son completamente *stateless*: no tienen volúmenes ni bind mounts, y cualquier dato que necesite sobrevivir a un restart tiene que vivir en Postgres.
-
-  Confirmé esto en la práctica: creé una publicación, hice `docker compose down` (sin `-v`) y `up` de nuevo, y la publicación seguía ahí — el volumen sobrevivió aunque el contenedor se destruyó y recreó. Después probé lo contrario con `down -v`, y ahí sí `GET /api/publicaciones` devolvió vacío, confirmando que ese flag es el que realmente borra los datos.
-
-  Un detalle que vale la pena dejar anotado: después de ese `down -v`, mi sesión (cookie de login) siguió siendo válida, porque es un JWT autofirmado que se verifica solo con `JWT_SECRET`, sin consultar la base. La prueba real de persistencia no fue que me desloguee, sino que los datos desaparecieron y la sesión no dependía de ellos.
+- **Qué persiste y qué no:** solo la base de datos tiene estado, en un volumen nombrado `db_data:/var/lib/postgresql/data`. Backend y frontend son *stateless*, sin volúmenes propios. Lo confirmé con `docker compose down` (sin `-v`) seguido de `up`: los datos seguían ahí. Con `down -v` sí se borraron, confirmando que ese flag es el que limpia el volumen.
 
 ## 3. Problemas encontrados
 
-- **Tenía el puerto de `db` publicado al host (`5433:5432`) sin usarlo para nada**, no tenía ningún cliente Postgres local corriendo. Lo saqué al revisar que la conexión real del backend viaja por la red interna de compose (`db:5432`), no por ese mapeo. Le pedí ayuda a Claude para pensar si el `docker-compose.yml` reflejaba bien mi stack, comparándolo contra un ejemplo del profesor pensado para .NET + nginx.
-
-- **Cuando llegué al momento de subir todo y abrir el PR, corrí `git remote -v` para ver a qué repo de GitHub estaba conectada mi carpeta**, porque no estaba viendo los PRs aparecer después de mis commits, y no me devolvió nada. O sea que esta carpeta donde venía trabajando (`curatta-temp`) tenía commits míos reales, pero nunca había estado conectada al repo de verdad del semestre (`ingsoft3-tp01`). En algún momento debo haber hecho un `git init` suelto ahí sin enganchar el remoto, y seguí laburando sin darme cuenta. Antes de tocar nada me fijé que lo que ya estaba subido en `origin/main` (`backend`, `frontend`, `decisiones.md`, `evidencias.md`) fuera la app correcta y no algo viejo, y una vez confirmado eso, conecté el remoto y traje ese historial. El problema es que mi historial local y el de `origin/main` no compartían ningún commit en común: son como dos árboles genealógicos separados que nunca se tocaron, aunque el contenido se pareciera. Si intentaba mezclarlos derecho con un merge, Git no sabía cómo compaginarlos y tiraba conflictos por todos lados. Por eso, en vez de mezclar los dos historiales, armé una rama nueva partiendo de `origin/main` (el bueno) y le sumé encima mis archivos actualizados de Docker, sin pisar lo que ya estaba subido.
-
-- **Después de hacer el push de las imágenes al registry, quise confirmar que habían quedado públicas haciendo un `docker pull`.** Docker me contestó "Image is up to date" sin bajar nada. Al toque pensé que estaba todo bien, pero en realidad esa prueba no servía para nada: yo ya tenía esa imagen guardada en mi disco porque la acababa de construir ahí mismo, así que Docker ni se molestó en ir a buscar nada al registry, solo miró que ya la tenía y cortó ahí. O sea que ese pull hubiera dado el mismo resultado estando la imagen pública o privada, porque nunca llegó a probar el permiso real. Para hacer la prueba de verdad, primero me deslogueé del registry con `docker logout`, después borré la copia local de la imagen con `docker rmi` (usando los dos nombres que tenía, porque si no me quedaba una copia con otro tag), y recién ahí repetí el pull. Esa vez sí bajó capa por capa, sin que yo tuviera ninguna sesión iniciada, y eso sí confirma que la imagen es pública de verdad: cualquiera sin credenciales la puede bajar.
+- **Después de hacer el push de las imágenes al registry, quise confirmar que habían quedado públicas haciendo un `docker pull`.** Docker me contestó "Image is up to date" sin bajar nada. Al toque pensé que estaba todo bien, pero en realidad esa prueba no servía para nada: yo ya tenía esa imagen guardada en mi disco porque la acababa de construir ahí mismo, así que Docker ni se molestó en ir a buscar nada al registry, solo miró que ya la tenía y cortó ahí. O sea que ese pull hubiera dado el mismo resultado estando la imagen pública o privada, porque nunca llegó a probar el permiso real.
+Para hacer la prueba de verdad, primero me deslogueé del registry con `docker logout`, después borré la copia local de la imagen con `docker rmi` (usando los dos nombres que tenía, porque si no me quedaba una copia con otro tag), y recién ahí repetí el pull. Esa vez sí bajó capa por capa, sin que yo tuviera ninguna sesión iniciada, y eso sí confirma que la imagen es pública de verdad: cualquiera sin credenciales la puede bajar.
 
 ## 4. Declaración de uso de IA
 
@@ -156,12 +133,12 @@ Usé Claude sobre todo para verificar, no para generar. El TP lo hice de forma m
 
 # TP4: Integración continua
 
-## 1. Estructura del pipeline
+## 1. Estructura elegida del pipeline
 
 Dos jobs, `build-backend` y `build-frontend`, sin `needs:` entre ellos, así que GitHub Actions los agenda en paralelo en dos runners distintos. Elegí esa separación porque refleja la separación real de mi app: `backend/` y `frontend/` son dos servicios independientes en `docker-compose.yml`, cada uno con su propio Dockerfile y su propio build context, que ya venían desacoplados desde el TP2. No tenía sentido meterlos en un solo job secuencial: no hay ninguna dependencia real entre construir la imagen del backend y construir la del frontend, así que hacerlo en serie solo sumaría tiempo de espera sin ganar nada.
 La otra razón para separarlos en dos jobs (y no un solo job con dos steps) es la señal que da el PR: cada job es un check independiente y requerido. Si algo rompe, veo de entrada cuál de las dos imágenes falló (`CI / build-backend` o `CI / build-frontend`) sin tener que abrir el log. Con un solo job monolítico, un fallo del frontend hubiera dejado en rojo un check que dice "build" a secas, y tendría que entrar igual a leer el log para saber cuál de los dos componentes rompió.
 
-## 2. Cache
+## 2. Qué cachea el pipeline y qué pasa si el cache desaparece
 
 Cada job usa `docker/build-push-action` con `cache-from`/`cache-to: type=gha`, y un `scope` distinto por servicio (`scope: backend`, `scope: frontend`). Esto usa el cache de GitHub Actions como backend de cache de BuildKit, separado por scope para que el cache del backend y el del frontend no se pisen entre sí (son capas completamente distintas, de Dockerfiles distintos).
 
@@ -169,7 +146,7 @@ Lo que se reutiliza en la práctica son las capas de BuildKit anteriores al `COP
 
 Si el cache desapareciera (primera corrida del pipeline, cache expirado por falta de uso, o un cambio de `scope`), el pipeline no se rompe: `cache-from` simplemente no encuentra nada que reusar y Buildx hace el build completo desde cero (pull de la imagen base, `npm install` entero, `npm run build` entero). Es más lento, pero sigue siendo correcto — el cache es una optimización de velocidad, no algo de lo que dependa la corrección del build.
 
-## 3. Por qué construye con mi Dockerfile en vez de compilar por su cuenta
+## 3. Por qué el pipeline construye con mi Dockerfile en vez de compilar por su cuenta
 
 Mi app ya se construye de una manera: el Dockerfile de cada servicio (backend y frontend), armado en el TP2. El pipeline no inventa otra forma de construir la app sino que usa ese mismo Dockerfile porque si el pipeline compilara por su cuenta con `npm` directamente, tendría dos definiciones de build para lo mismo, y esas dos definiciones tarde o temprano divergen lo que significa que alguien cambia la versión de Node o agrega una dependencia del sistema en el Dockerfile (como el `openssl` que necesita Prisma) y se olvida de reflejarlo en el CI y terminaría verificando una compilación distinta de la que después despliego.
 
@@ -181,11 +158,9 @@ Esto no es solo teórico porque cuando rompí a propósito un import inexistente
 
 - **Confundí dos cosas distintas que comparten la palabra "outdated".** GitHub le puso la etiqueta "Outdated" a un comentario de revisión automática de Copilot en el PR de la rotura, porque el código que comentaba ya no existía (lo había borrado en un commit posterior). Yo lo interpreté como si fuera el banner que mencionaba el profe en el tp, el de "esta rama está desactualizada respecto a `main`" (la regla *Require branches to be up to date*) que estaba buscando en el otro PR (el de relleno). Son features completamente distintas de GitHub que casualmente comparten la palabra "outdated": una es sobre un comentario de revisión quedando obsoleto, la otra es sobre una rama quedando desactualizada respecto a la base. El banner real de rama desactualizada solo aparece *después* de mergear el PR que mueve `main`, como lo aclaraba el pdf del profe, no antes.
 
-- **Docker Desktop no estaba corriendo al querer verificar el build local.** Al correr `docker build ./backend` para confirmar la rotura también en mi máquina (como pide la consigna), Docker devolvió `Cannot connect to the Docker daemon`. No era un problema del ejercicio, sino que no tenía la app de Docker Desktop abierta.
+## 5. ACLARACIÓN MÍA: Baja de Tienda Nube y contacto por WhatsApp
 
-## 5. Baja de Tienda Nube y contacto por WhatsApp
-
-Le saqué a la app la integración con Tienda Nube por lo recomendado por la cátedra, para no depender de una integración de terceros que no aportaba a la materia (mismo criterio que ya había aplicado en el TP2 al sacar Pinterest y Mercado Libre). Al sacarla me quedó un gap real: sin ella, no había ninguna forma de que quien quiere comprar una prenda se contacte con quien la publicó.
+Le saqué a la app la integración con Tienda Nube por lo recomendado para la eleccion de la app, para no depender de una integración de terceros que no aportaba a la materia (mismo criterio que ya había aplicado en el TP2 al sacar Pinterest y Mercado Libre). Al sacarla me quedó un gap real: sin ella, no había ninguna forma de que quien quiere comprar una prenda se contacte con quien la publicó.
 
 Lo resolví agregando el teléfono como dato obligatorio del registro (`backend/app/api/auth/signup/route.ts`), normalizado a solo dígitos con código de país y sin "+" (`normalizarTelefono` en `backend/lib/telefono.ts`) y validado contra un rango de 8 a 15 dígitos antes de crear el usuario. Con ese dato, cada resultado de búsqueda por foto muestra un botón que arma un link `wa.me` directo a esa conversación (`linkWhatsapp` en `frontend/lib/whatsapp.ts`, usado en `BuscarPorFotoForm.tsx`), con un mensaje pre-cargado que menciona la prenda puntual que el comprador estaba mirando.
 
@@ -201,8 +176,8 @@ Los tags de git de este repo van `v1.0.0` → `v3.0.0` → `v4.0.0`: salteé `v2
 
 ## Declaración de uso de IA
 
-Usé Claude principalmente para traducir los comandos de ejemplo del profesor (pensados para .NET/`Program.cs`) a mi stack (Next.js/TypeScript, `backend/lib/prisma.ts`), y para que me explicara, con mis propias ramas y PRs como ejemplo, conceptos que no me quedaban claros de la guía (por qué hacen falta dos PRs abiertos a la vez para ver el botón *Update branch*, la diferencia entre el check de rama desactualizada y el comentario "Outdated" de Copilot). Todos los comandos de git/gh los corrí yo misma (excepto ese problema mencionado abajo) desde la terminal: prefiero eso porque veo el output y puedo pegarlo de vuelta o arreglar lo que necesite si algo no coincide con las respuestas o salidas de la maquina del profe.
+Usé Claude principalmente para traducir los comandos de ejemplo del profesor (pensados para .NET/`Program.cs`) a mi stack (Next.js/TypeScript, `backend/lib/prisma.ts`).
 
 Problema que tuve con uso de IA, el chat de claude code en visual studio: en un momento del TP le pedí a Claude una revisión/verificación del estado del repo, y en respuesta ejecutó por su cuenta un comando en la parte de cache que yo no le había pedido, cambiando de rama en mi checkout local sin que se lo indicara. Lo interrumpí con un "NO HAGAS NADA" apenas lo vi. Ya le había pedido explícitamente antes que no ejecutara acciones y se limitara a darme los comandos para correr yo misma, y en ese momento no lo respetó. Después de eso volvió a comportarse como se le pidió: solo research de lectura (`git status`, `grep`, leer archivos) para poder darme comandos correctos, sin volver a ejecutar nada que cambiara el estado del repo.
 
-**Excepción explícita, para la actualización a `v4.0.0` de la sección 5:** ahí sí le pedí a Claude que corriera el build y el push a GHCR por su cuenta, después de confirmar puntualmente con él que ninguna acción de git (commit, push, nada "definitivo" al repo) quedaba incluida en ese permiso — eso lo sigo haciendo yo a mano. La distinción que mantengo es esa: acciones sobre el registry de imágenes las puede ejecutar Claude si se lo pido explícitamente para ese caso puntual, acciones sobre git las hago siempre yo.
+
