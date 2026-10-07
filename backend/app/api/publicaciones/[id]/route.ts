@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import {
+  esEstadoValido,
+  normalizarNombre,
+  puedeModificarse,
+  validarPrecio,
+  type EstadoPublicacion,
+} from "@/lib/validaciones";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,10 +45,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Publicación no encontrada" }, { status: 404 });
   }
 
-  // Una publicación vendida es definitiva: ni sus datos ni su estado se
-  // pueden volver a tocar (esto también bloquea el único camino por el que
-  // podría volver a "disponible").
-  if (publicacion.estado === "vendida") {
+  if (!puedeModificarse(publicacion.estado)) {
     return NextResponse.json(
       { error: "Una publicación vendida no se puede modificar" },
       { status: 409 }
@@ -53,10 +57,10 @@ export async function PATCH(
     return NextResponse.json({ error: "Cuerpo inválido" }, { status: 400 });
   }
 
-  const data: { nombre?: string; precio?: number; estado?: "disponible" | "vendida" } = {};
+  const data: { nombre?: string; precio?: number; estado?: EstadoPublicacion } = {};
 
   if (body.nombre !== undefined) {
-    const nombre = typeof body.nombre === "string" ? body.nombre.trim() : "";
+    const nombre = normalizarNombre(body.nombre);
     if (!nombre) {
       return NextResponse.json({ error: "El nombre no puede estar vacío" }, { status: 400 });
     }
@@ -64,15 +68,15 @@ export async function PATCH(
   }
 
   if (body.precio !== undefined) {
-    const precio = typeof body.precio === "number" ? body.precio : NaN;
-    if (!Number.isFinite(precio) || precio <= 0) {
-      return NextResponse.json({ error: "El precio debe ser mayor a 0" }, { status: 400 });
+    const precio = validarPrecio(body.precio);
+    if (!precio.ok) {
+      return NextResponse.json({ error: precio.error }, { status: 400 });
     }
-    data.precio = precio;
+    data.precio = precio.valor;
   }
 
   if (body.estado !== undefined) {
-    if (body.estado !== "disponible" && body.estado !== "vendida") {
+    if (!esEstadoValido(body.estado)) {
       return NextResponse.json({ error: "Estado inválido" }, { status: 400 });
     }
     data.estado = body.estado;
