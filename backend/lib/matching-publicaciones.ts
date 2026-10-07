@@ -58,7 +58,7 @@ type PublicacionAnalizada = Publicacion & {
   user: { telefono: string };
 };
 
-function tieneAnalisis(p: Publicacion & { user: { telefono: string } }): p is PublicacionAnalizada {
+function tieneAnalisis(p: Candidato): p is PublicacionAnalizada {
   return (
     !!p.tipoPrenda &&
     !!p.siluetaCorte &&
@@ -101,19 +101,43 @@ export type MatchResult = {
   mensaje?: string;
 };
 
-// Separado de matchContraPublicaciones para poder testear el scoring con un
-// AnalisisModa fijo, sin depender de una llamada real a Azure OpenAI.
-export async function matchContraAnalisis(
-  analisis: AnalisisModa,
-  opts: { excludeUserId?: string } = {}
-): Promise<MatchResult> {
-  const candidatos = await prisma.publicacion.findMany({
+// Lo que el matching le pide a la base, dicho con nuestras palabras y no con
+// las de Prisma. Es la frontera que el test reemplaza por un doble.
+export type FiltroCandidatos = {
+  estado: "disponible";
+  tiposPrenda: string[];
+  excludeUserId?: string;
+};
+
+export type Candidato = Publicacion & { user: { telefono: string } };
+
+export type BuscarCandidatos = (filtro: FiltroCandidatos) => Promise<Candidato[]>;
+
+// La búsqueda real contra Postgres: la única parte de este archivo que toca
+// la base. Solo traduce el filtro a una consulta de Prisma, sin reglas propias.
+export const buscarCandidatosEnBase: BuscarCandidatos = ({ estado, tiposPrenda, excludeUserId }) =>
+  prisma.publicacion.findMany({
     where: {
-      estado: "disponible",
-      tipoPrenda: { in: tiposCompatibles(analisis.tipo_prenda) },
-      ...(opts.excludeUserId ? { userId: { not: opts.excludeUserId } } : {}),
+      estado,
+      tipoPrenda: { in: tiposPrenda },
+      ...(excludeUserId ? { userId: { not: excludeUserId } } : {}),
     },
     include: { user: { select: { telefono: true } } },
+  });
+
+// Separado de matchContraPublicaciones para poder testear el scoring con un
+// AnalisisModa fijo, sin depender de una llamada real a Azure OpenAI. La
+// búsqueda de candidatos entra por parámetro (`buscarCandidatos`) para poder
+// testearlo también sin una base de datos levantada.
+export async function matchContraAnalisis(
+  analisis: AnalisisModa,
+  opts: { excludeUserId?: string },
+  buscarCandidatos: BuscarCandidatos
+): Promise<MatchResult> {
+  const candidatos = await buscarCandidatos({
+    estado: "disponible",
+    tiposPrenda: tiposCompatibles(analisis.tipo_prenda),
+    excludeUserId: opts.excludeUserId,
   });
 
   const scored = candidatos
@@ -142,5 +166,5 @@ export async function matchContraPublicaciones(
   opts: { excludeUserId?: string } = {}
 ): Promise<MatchResult> {
   const analisis = await analyzeImageModaFromDataUrl(fotoDataUrl);
-  return matchContraAnalisis(analisis, opts);
+  return matchContraAnalisis(analisis, opts, buscarCandidatosEnBase);
 }
