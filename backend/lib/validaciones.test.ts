@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  esEstadoValido,
   LARGO_MINIMO_PASSWORD,
   MAX_FOTO_CHARS,
   normalizarNombre,
@@ -89,6 +90,18 @@ describe("validarFotoPublicacion", () => {
     const foto = prefijo + "a".repeat(largo - prefijo.length);
 
     expect(validarFotoPublicacion(foto).ok).toBe(esperado);
+  });
+});
+
+describe("esEstadoValido", () => {
+  it.each([
+    ["disponible", true],
+    ["vendida", true],
+    ["reservada", false],
+    ["Vendida", false],
+    [undefined, false],
+  ])("con el estado %s devuelve %s", (estado, esperado) => {
+    expect(esEstadoValido(estado)).toBe(esperado);
   });
 });
 

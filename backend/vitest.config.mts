@@ -9,5 +9,18 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    coverage: {
+      provider: "v8",
+      // json-summary deja coverage-summary.json, que es lo que el pipeline lee
+      // para armar la tabla del Summary de la corrida.
+      reporter: ["text", "html", "lcov", "json-summary"],
+      // Una carpeta, no una lista de archivos: todo archivo nuevo en lib/ entra
+      // solo a la cuenta, aunque nadie lo testee. Las rutas de app/api quedan
+      // afuera porque ya no tienen reglas: solo piden, delegan en lib/ y
+      // responden.
+      include: ["lib/**"],
+      // prisma.ts solo crea la conexión a la base (arranque): no tiene reglas.
+      exclude: ["lib/prisma.ts"],
+    },
   },
 });

@@ -67,6 +67,20 @@ describe("matchContraAnalisis", () => {
     });
   });
 
+  it("si el tipo de prenda no tiene compatibles, le pide a la base solo ese tipo", async () => {
+    // Arrange: "blazer" no está en ningún grupo de GRUPOS_COMPATIBLES
+    const buscarCandidatos = vi.fn().mockResolvedValue([]);
+    const blazerBuscado: AnalisisModa = { ...jeanBuscado, tipo_prenda: "blazer" };
+
+    // Act
+    await matchContraAnalisis(blazerBuscado, {}, buscarCandidatos);
+
+    // Assert
+    expect(buscarCandidatos).toHaveBeenCalledWith(
+      expect.objectContaining({ tiposPrenda: ["blazer"] })
+    );
+  });
+
   it("devuelve solo las prendas que llegan al umbral, de la más parecida a la menos", async () => {
     const buscarCandidatos = vi.fn().mockResolvedValue([
       candidato("distinta", { siluetaCorte: "oversize", patron: "rayas", familiaColor: "negro", texturaTela: "lino" }),

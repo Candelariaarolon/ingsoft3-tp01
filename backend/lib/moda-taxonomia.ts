@@ -79,9 +79,9 @@ export type AnalisisModa = {
   formalidad_estilo: FormalidadEstilo | string;
 };
 
-// Mismo bugfix que lib/azure-openai.ts (PROMPT_ANALISIS): sin este paso
-// explícito de aislar la prenda, el modelo confunde el color/textura de la
-// prenda con el de la piel, el pelo o el fondo cuando hay una persona puesta.
+// Sin este paso explícito de aislar la prenda, el modelo confunde el
+// color/textura de la prenda con el de la piel, el pelo o el fondo cuando hay
+// una persona puesta.
 export const PROMPT_ANALISIS_MODA = `Sos un sistema de análisis de moda. Tu ÚNICO objeto de estudio es la prenda de vestir principal en la imagen. Todo lo demás es ruido que debés descartar, sin excepción.
 
 PASO 1 — Separá mentalmente la imagen en dos grupos (esto es razonamiento interno, no una instrucción para la persona):
