@@ -1,27 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { enviarJson } from "@/api/cliente";
 import { formatARS } from "@/lib/format";
+import { actualizarPublicacion, validarEdicion, type Publicacion } from "@/lib/publicaciones";
 
-export type Publicacion = {
-  id: string;
-  nombre: string;
-  precio: number;
-  foto: string;
-  estado: "disponible" | "vendida";
-  createdAt: string;
-};
-
-async function patchPublicacion(id: string, body: Record<string, unknown>) {
-  const res = await fetch(`/api/publicaciones/${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = (await res.json()) as { publicacion?: Publicacion; error?: string };
-  if (!res.ok) throw new Error(data.error ?? "No pudimos guardar los cambios");
-  return data.publicacion!;
-}
+export type { Publicacion };
 
 export default function PublicacionTile({
   publicacion,
@@ -42,17 +26,12 @@ export default function PublicacionTile({
 
   const guardar = async () => {
     setError(null);
-    const nombreLimpio = nombre.trim();
-    const precioNum = Number(precio);
-    if (!nombreLimpio) return setError("El nombre no puede estar vacío");
-    if (!Number.isFinite(precioNum) || precioNum <= 0) return setError("El precio debe ser mayor a 0");
+    const validacion = validarEdicion(nombre, precio);
+    if (!validacion.ok) return setError(validacion.error);
 
     setProcesando(true);
     try {
-      const actualizada = await patchPublicacion(publicacion.id, {
-        nombre: nombreLimpio,
-        precio: precioNum,
-      });
+      const actualizada = await actualizarPublicacion(publicacion.id, validacion.valor, enviarJson);
       onUpdated(actualizada);
       setEditando(false);
     } catch (err) {
@@ -66,7 +45,11 @@ export default function PublicacionTile({
     setProcesando(true);
     setError(null);
     try {
-      const actualizada = await patchPublicacion(publicacion.id, { estado: "vendida" });
+      const actualizada = await actualizarPublicacion(
+        publicacion.id,
+        { estado: "vendida" },
+        enviarJson
+      );
       onUpdated(actualizada);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pudimos marcar la publicación como vendida");
