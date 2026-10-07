@@ -26,5 +26,8 @@ COPY --from=build /src/prisma ./prisma
 COPY --from=build /src/package.json ./package.json
 COPY --from=build /src/next.config.mjs ./next.config.mjs
 
+# Equivalente Node de ENV ASPNETCORE_URLS en .NET: `next start` lee PORT del
+# entorno, así el puerto queda declarado acá y no escondido en package.json.
 EXPOSE 4000
+ENV PORT=4000
 CMD ["sh", "-c", "npx prisma migrate deploy && npm start"]
