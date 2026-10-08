@@ -18,6 +18,10 @@ export default defineConfig({
       // solo a la cuenta, aunque nadie lo testee. Los componentes y las páginas
       // quedan afuera: son pegamento de UI, su lógica ya está en lib/.
       include: ["lib/**"],
+      // El umbral que frena el build: un poco por debajo de lo medido (93,33 %
+      // de líneas y 100 % de ramas), para que pase hoy y frene si entra código
+      // sin tests. Va en las dos métricas, como pide la guía (§3.5).
+      thresholds: { lines: 90, branches: 90 },
     },
   },
 });
