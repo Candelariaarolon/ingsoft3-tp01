@@ -119,32 +119,10 @@ function extractJson(text: string): Partial<AnalisisModa> | null {
   }
 }
 
-export async function analyzeImageModaFromDataUrl(
-  dataUrl: string
-): Promise<AnalisisModa> {
-  const client = createClient();
-  const deployment = process.env.AZURE_OPENAI_DEPLOYMENT_NAME!;
-
-  const response = await client.chat.completions.create({
-    model: deployment,
-    max_tokens: 400,
-    temperature: 0,
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "text", text: PROMPT_ANALISIS_MODA },
-          { type: "image_url", image_url: { url: dataUrl, detail: "auto" } },
-        ],
-      },
-    ],
-  });
-
-  const text = response.choices[0]?.message?.content ?? "";
-  const razonamiento = text.slice(0, text.indexOf("{")).trim();
-  if (razonamiento) {
-    console.log(`[moda-taxonomia] razonamiento: ${razonamiento}`);
-  }
+// Regla, separada de la llamada a Azure: de la respuesta en texto del modelo
+// saca el JSON, exige los 6 atributos y los normaliza (minúsculas, sin
+// espacios), porque el matching los compara por igualdad exacta.
+export function interpretarRespuestaModa(text: string): AnalisisModa {
   const parsed = extractJson(text);
 
   if (
@@ -169,4 +147,45 @@ export async function analyzeImageModaFromDataUrl(
     textura_tela: String(parsed.textura_tela).toLowerCase().trim(),
     formalidad_estilo: String(parsed.formalidad_estilo).toLowerCase().trim(),
   };
+}
+
+// Lo que el análisis le pide al modelo: una foto, y la respuesta en texto.
+// Es la frontera que los tests reemplazan por un doble.
+export type PedirAlModelo = (dataUrl: string) => Promise<string>;
+
+// La llamada real a Azure OpenAI: lo único de este archivo que sale a la red.
+export const pedirAlModeloAzure: PedirAlModelo = async (dataUrl) => {
+  const client = createClient();
+  const deployment = process.env.AZURE_OPENAI_DEPLOYMENT_NAME!;
+
+  const response = await client.chat.completions.create({
+    model: deployment,
+    max_tokens: 400,
+    temperature: 0,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: PROMPT_ANALISIS_MODA },
+          { type: "image_url", image_url: { url: dataUrl, detail: "auto" } },
+        ],
+      },
+    ],
+  });
+
+  const text = response.choices[0]?.message?.content ?? "";
+  const razonamiento = text.slice(0, text.indexOf("{")).trim();
+  if (razonamiento) {
+    console.log(`[moda-taxonomia] razonamiento: ${razonamiento}`);
+  }
+  return text;
+};
+
+// Las rutas siguen llamando analyzeImageModaFromDataUrl(foto) como siempre:
+// por defecto le pide a Azure. Los tests le pasan un `pedirAlModelo` propio.
+export async function analyzeImageModaFromDataUrl(
+  dataUrl: string,
+  pedirAlModelo: PedirAlModelo = pedirAlModeloAzure
+): Promise<AnalisisModa> {
+  return interpretarRespuestaModa(await pedirAlModelo(dataUrl));
 }
