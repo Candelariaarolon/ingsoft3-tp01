@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { linkWhatsapp } from "./whatsapp";
 
-describe("linkWhatsapp", () => {
+// DEMO §3.3 (TP5): tests apagados A PROPÓSITO para mostrar que el umbral de
+// cobertura frena el build aunque todos los demás tests pasen. Se vuelven a
+// prender en el commit siguiente.
+describe.skip("linkWhatsapp", () => {
   it("arma el link de wa.me al teléfono de la vendedora", () => {
     const link = linkWhatsapp("541122334455", "Jean recto");
 
