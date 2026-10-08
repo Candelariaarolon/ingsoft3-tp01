@@ -1,13 +1,13 @@
 import { cookies } from "next/headers";
-import { SignJWT, jwtVerify } from "jose";
+import { jwtVerify } from "jose";
 
 // Sesiones propias (no NextAuth): JWT firmado con jose, guardado en una
 // cookie httpOnly. El payload lleva id/email directo — evita un round-trip
 // a la base en cada request que solo necesita saber quién está logueado.
+// El front solo LEE la sesión: crearla y borrarla es trabajo del backend
+// (backend/lib/session.ts).
 
 export const SESSION_COOKIE = "curatta_session";
-const SESSION_DURATION = "7d";
-const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 
 function getSecret(): Uint8Array {
   const secret = process.env.JWT_SECRET;
@@ -20,51 +20,34 @@ export type SessionPayload = {
   email: string;
 };
 
-export async function createSessionToken(payload: SessionPayload): Promise<string> {
-  return new SignJWT({ ...payload })
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime(SESSION_DURATION)
-    .sign(getSecret());
-}
+export type Sesion = { user: SessionPayload & { id: string } };
 
-async function verifySessionToken(token: string): Promise<SessionPayload | null> {
+// Regla de la sesión, separada de dónde viene el token: un token sólo vale si
+// está firmado con nuestro JWT_SECRET, no venció y trae userId y email. Ante
+// cualquier duda (incluso si falta el secreto) devuelve null: mejor tratar a
+// alguien como no logueado que dejar pasar un token que no pudimos verificar.
+export async function sesionDesdeToken(token: string | undefined): Promise<Sesion | null> {
+  if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, getSecret());
     if (typeof payload.userId !== "string" || typeof payload.email !== "string") return null;
-    return { userId: payload.userId, email: payload.email };
+    return { user: { id: payload.userId, userId: payload.userId, email: payload.email } };
   } catch {
     return null;
   }
 }
 
+export type LeerToken = () => Promise<string | undefined>;
+
+// La lectura real de la cookie: lo único de este archivo que depende de Next.
+export const leerTokenDeCookie: LeerToken = async () => {
+  const cookieStore = await cookies();
+  return cookieStore.get(SESSION_COOKIE)?.value;
+};
+
 // Firma compatible con next-auth's `auth()`: { user: { id, email } } | null.
-// Mantiene sin cambios a todos los route handlers y server components que
-// ya llamaban `await auth()`.
-export async function auth(): Promise<{ user: SessionPayload & { id: string } } | null> {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(SESSION_COOKIE)?.value;
-  if (!token) return null;
-
-  const payload = await verifySessionToken(token);
-  if (!payload) return null;
-
-  return { user: { id: payload.userId, ...payload } };
-}
-
-export async function setSessionCookie(payload: SessionPayload): Promise<void> {
-  const token = await createSessionToken(payload);
-  const cookieStore = await cookies();
-  cookieStore.set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    maxAge: SESSION_MAX_AGE_SECONDS,
-    path: "/",
-  });
-}
-
-export async function clearSessionCookie(): Promise<void> {
-  const cookieStore = await cookies();
-  cookieStore.delete(SESSION_COOKIE);
+// Las páginas siguen llamando `await auth()` sin argumentos (usa la cookie
+// real); los tests le pasan un `leerToken` propio para no depender de Next.
+export async function auth(leerToken: LeerToken = leerTokenDeCookie): Promise<Sesion | null> {
+  return sesionDesdeToken(await leerToken());
 }
