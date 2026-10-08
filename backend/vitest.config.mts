@@ -21,6 +21,10 @@ export default defineConfig({
       include: ["lib/**"],
       // prisma.ts solo crea la conexión a la base (arranque): no tiene reglas.
       exclude: ["lib/prisma.ts"],
+      // El umbral que frena el build: un poco por debajo de lo medido (87,09 %
+      // de líneas y 88,76 % de ramas), para que pase hoy y frene si entra
+      // código sin tests. Va en las dos métricas, como pide la guía (§3.5).
+      thresholds: { lines: 85, branches: 85 },
     },
   },
 });
