@@ -7,6 +7,9 @@ node_modules/
 .next/
 out/
 
+# reportes de cobertura (se generan en cada corrida de tests)
+coverage/
+
 # misc
 .DS_Store
 *.pem

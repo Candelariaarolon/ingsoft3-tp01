@@ -2,8 +2,10 @@
 FROM node:20-slim AS build
 WORKDIR /src
 
-COPY package.json package-lock.json* ./
-RUN npm install
+# npm ci (y no install) respeta el package-lock.json al pie de la letra, e
+# instala también las devDependencies: ahí viene vitest para la etapa de tests.
+COPY package.json package-lock.json ./
+RUN npm ci
 
 COPY . .
 # El destino de rewrites() en next.config.mjs se resuelve una sola vez, acá
@@ -14,7 +16,14 @@ ARG BACKEND_URL=http://backend:4000
 ENV BACKEND_URL=$BACKEND_URL
 RUN npm run build
 
-# ---- Etapa 2: runtime (imagen mínima) ----
+# ---- Etapa 2: tests (parte del build: ya tiene Node, el código y vitest) ----
+# Va EN EL MEDIO: si quedara última, la imagen de producción sería la de
+# tests. Sin WORKDIR propio: hereda /src de la etapa build. Si la cobertura
+# queda por debajo del umbral, vitest sale con error y el job se pone rojo.
+FROM build AS test
+ENTRYPOINT ["npm", "run", "test:ci"]
+
+# ---- Etapa 3: runtime (imagen mínima) ----
 # output: "standalone" en next.config.mjs deja una carpeta autocontenida
 # con solo lo que el server usa — no necesita node_modules completo, ni
 # ningún CLI, a diferencia del backend.

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { matchContraPublicaciones } from "@/lib/matching-publicaciones";
+import { esFotoDataUrl } from "@/lib/validaciones";
 
 export const runtime = "nodejs";
 
@@ -13,8 +14,8 @@ export async function POST(req: Request) {
   }
 
   const body = (await req.json().catch(() => null)) as Body | null;
-  const foto = typeof body?.foto === "string" ? body.foto : "";
-  if (!foto || !foto.startsWith("data:image/")) {
+  const foto = body?.foto;
+  if (!esFotoDataUrl(foto)) {
     return NextResponse.json({ error: "Falta la foto a buscar" }, { status: 400 });
   }
 

@@ -7,7 +7,7 @@ import { SignJWT, jwtVerify } from "jose";
 
 export const SESSION_COOKIE = "curatta_session";
 const SESSION_DURATION = "7d";
-const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+export const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 
 function getSecret(): Uint8Array {
   const secret = process.env.JWT_SECRET;
@@ -20,6 +20,8 @@ export type SessionPayload = {
   email: string;
 };
 
+export type Sesion = { user: SessionPayload & { id: string } };
+
 export async function createSessionToken(payload: SessionPayload): Promise<string> {
   return new SignJWT({ ...payload })
     .setProtectedHeader({ alg: "HS256" })
@@ -28,43 +30,82 @@ export async function createSessionToken(payload: SessionPayload): Promise<strin
     .sign(getSecret());
 }
 
-async function verifySessionToken(token: string): Promise<SessionPayload | null> {
+// Regla de la sesión, separada de dónde viene el token: un token sólo vale si
+// está firmado con nuestro JWT_SECRET, no venció y trae userId y email. Ante
+// cualquier duda (incluso si falta el secreto) devuelve null: mejor tratar a
+// alguien como no logueado que dejar pasar un token que no pudimos verificar.
+export async function sesionDesdeToken(token: string | undefined): Promise<Sesion | null> {
+  if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, getSecret());
     if (typeof payload.userId !== "string" || typeof payload.email !== "string") return null;
-    return { userId: payload.userId, email: payload.email };
+    return { user: { id: payload.userId, userId: payload.userId, email: payload.email } };
   } catch {
     return null;
   }
 }
 
-// Firma compatible con next-auth's `auth()`: { user: { id, email } } | null.
-// Mantiene sin cambios a todos los route handlers y server components que
-// ya llamaban `await auth()`.
-export async function auth(): Promise<{ user: SessionPayload & { id: string } } | null> {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(SESSION_COOKIE)?.value;
-  if (!token) return null;
+// Lo que la sesión necesita de las cookies, dicho con nuestras palabras. Es la
+// frontera que los tests reemplazan por un doble; en la app la da Next.
+export type OpcionesCookie = {
+  httpOnly: boolean;
+  secure: boolean;
+  sameSite: "lax";
+  maxAge: number;
+  path: string;
+};
 
-  const payload = await verifySessionToken(token);
-  if (!payload) return null;
+export type AlmacenDeCookies = {
+  leer(nombre: string): string | undefined;
+  guardar(nombre: string, valor: string, opciones: OpcionesCookie): void;
+  borrar(nombre: string): void;
+};
 
-  return { user: { id: payload.userId, ...payload } };
+// Las cookies reales del pedido: lo único de este archivo que depende de Next.
+export async function cookiesDeNext(): Promise<AlmacenDeCookies> {
+  const store = await cookies();
+  return {
+    leer: (nombre) => store.get(nombre)?.value,
+    guardar: (nombre, valor, opciones) => store.set(nombre, valor, opciones),
+    borrar: (nombre) => store.delete(nombre),
+  };
 }
 
-export async function setSessionCookie(payload: SessionPayload): Promise<void> {
-  const token = await createSessionToken(payload);
-  const cookieStore = await cookies();
-  cookieStore.set(SESSION_COOKIE, token, {
+// La cookie de sesión no se puede leer desde JavaScript (httpOnly), sólo viaja
+// por HTTPS en producción, no se manda en pedidos de otros sitios (lax) y dura
+// lo mismo que el token.
+export function opcionesDeCookieDeSesion(entorno: string | undefined): OpcionesCookie {
+  return {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: entorno === "production",
     sameSite: "lax",
     maxAge: SESSION_MAX_AGE_SECONDS,
     path: "/",
-  });
+  };
 }
 
-export async function clearSessionCookie(): Promise<void> {
-  const cookieStore = await cookies();
-  cookieStore.delete(SESSION_COOKIE);
+// Firma compatible con next-auth's `auth()`: { user: { id, email } } | null.
+// Las rutas siguen llamando `await auth()` sin argumentos (usa las cookies de
+// Next); los tests le pasan un almacén propio.
+export async function auth(
+  obtenerCookies: () => Promise<AlmacenDeCookies> = cookiesDeNext
+): Promise<Sesion | null> {
+  const almacen = await obtenerCookies();
+  return sesionDesdeToken(almacen.leer(SESSION_COOKIE));
+}
+
+export async function setSessionCookie(
+  payload: SessionPayload,
+  obtenerCookies: () => Promise<AlmacenDeCookies> = cookiesDeNext
+): Promise<void> {
+  const token = await createSessionToken(payload);
+  const almacen = await obtenerCookies();
+  almacen.guardar(SESSION_COOKIE, token, opcionesDeCookieDeSesion(process.env.NODE_ENV));
+}
+
+export async function clearSessionCookie(
+  obtenerCookies: () => Promise<AlmacenDeCookies> = cookiesDeNext
+): Promise<void> {
+  const almacen = await obtenerCookies();
+  almacen.borrar(SESSION_COOKIE);
 }

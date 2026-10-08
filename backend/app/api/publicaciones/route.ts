@@ -2,13 +2,10 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { analyzeImageModaFromDataUrl } from "@/lib/moda-taxonomia";
+import { normalizarNombre, validarFotoPublicacion, validarPrecio } from "@/lib/validaciones";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-// Data URL base64 — ~7M caracteres cubre una foto de varios MB sin dejar
-// subir blobs arbitrariamente grandes a la base.
-const MAX_FOTO_CHARS = 7 * 1024 * 1024;
 
 export async function GET() {
   const session = await auth();
@@ -33,22 +30,21 @@ export async function POST(req: Request) {
   }
 
   const body = (await req.json().catch(() => null)) as Body | null;
-  const nombre = typeof body?.nombre === "string" ? body.nombre.trim() : "";
-  const precio = typeof body?.precio === "number" ? body.precio : NaN;
-  const foto = typeof body?.foto === "string" ? body.foto : "";
 
+  const nombre = normalizarNombre(body?.nombre);
   if (!nombre) {
     return NextResponse.json({ error: "Falta el nombre de la prenda" }, { status: 400 });
   }
-  if (!Number.isFinite(precio) || precio <= 0) {
-    return NextResponse.json({ error: "El precio debe ser mayor a 0" }, { status: 400 });
+  const precioValidado = validarPrecio(body?.precio);
+  if (!precioValidado.ok) {
+    return NextResponse.json({ error: precioValidado.error }, { status: 400 });
   }
-  if (!foto || !foto.startsWith("data:image/")) {
-    return NextResponse.json({ error: "Falta la foto de la prenda" }, { status: 400 });
+  const fotoValidada = validarFotoPublicacion(body?.foto);
+  if (!fotoValidada.ok) {
+    return NextResponse.json({ error: fotoValidada.error }, { status: 400 });
   }
-  if (foto.length > MAX_FOTO_CHARS) {
-    return NextResponse.json({ error: "La foto es demasiado pesada" }, { status: 400 });
-  }
+  const precio = precioValidado.valor;
+  const foto = fotoValidada.valor;
 
   // Best-effort: si el análisis falla (Azure caído, sin credenciales, etc.)
   // la publicación se crea igual — solo queda afuera del matching por foto
