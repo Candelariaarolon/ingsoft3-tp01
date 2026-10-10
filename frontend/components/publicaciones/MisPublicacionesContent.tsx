@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import PublicacionTile, { type Publicacion } from "./PublicacionTile";
+import { resumenDeVentas, textoResumen } from "@/lib/ventas";
 
 export default function MisPublicacionesContent() {
   const [publicaciones, setPublicaciones] = useState<Publicacion[]>([]);
@@ -22,7 +23,14 @@ export default function MisPublicacionesContent() {
   return (
     <section className="mx-auto max-w-6xl px-6 py-11 md:px-12">
       <div className="mb-10 flex items-center justify-between">
-        <h1 className="font-serif text-2xl text-negro">Mis publicaciones</h1>
+        <div>
+          <h1 className="font-serif text-2xl text-negro">Mis publicaciones</h1>
+          {publicaciones.length > 0 && (
+            <p className="mt-1 text-[12px] text-negro/45">
+              {textoResumen(resumenDeVentas(publicaciones))}
+            </p>
+          )}
+        </div>
         <Link
           href="/publicaciones/nueva"
           className="rounded-sm border border-negro bg-negro px-6 py-2.5 text-[13px] text-crema transition-opacity duration-300 ease-in-out hover:opacity-80"
