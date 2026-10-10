@@ -19,10 +19,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-// DEMO §3.4 (TP5): tests apagados A PROPÓSITO para mostrar que el umbral de
-// cobertura del backend frena el build aunque todos los demás tests pasen. Se
-// vuelven a prender en el commit siguiente.
-describe.skip("createClient", () => {
+describe("createClient", () => {
   it("con las cuatro variables de Azure configuradas, arma el cliente", () => {
     expect(createClient()).toBeDefined();
   });
