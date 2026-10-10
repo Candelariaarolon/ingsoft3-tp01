@@ -51,3 +51,38 @@ export async function actualizarPublicacion(
   }
   return respuesta.publicacion!;
 }
+
+export type Antiguedad = "nueva" | "esta-semana" | "este-mes" | "mas-de-un-mes" | "sin-fecha";
+
+const MS_POR_DIA = 24 * 60 * 60 * 1000;
+
+// Cuánto hace que se publicó una prenda, para mostrarlo en "Mis
+// publicaciones". `ahora` entra por parámetro para no depender del reloj.
+export function antiguedadDePublicacion(createdAt: string | undefined, ahora: Date = new Date()): Antiguedad {
+  if (!createdAt) {
+    return "sin-fecha";
+  }
+  const creada = new Date(createdAt);
+  if (Number.isNaN(creada.getTime())) {
+    return "sin-fecha";
+  }
+  const dias = (ahora.getTime() - creada.getTime()) / MS_POR_DIA;
+  if (dias < 1) {
+    return "nueva";
+  }
+  if (dias < 7) {
+    return "esta-semana";
+  }
+  if (dias < 30) {
+    return "este-mes";
+  }
+  return "mas-de-un-mes";
+}
+
+export const TEXTO_ANTIGUEDAD: Record<Antiguedad, string> = {
+  nueva: "Publicada hoy",
+  "esta-semana": "Publicada esta semana",
+  "este-mes": "Publicada este mes",
+  "mas-de-un-mes": "Publicada hace más de un mes",
+  "sin-fecha": "",
+};
