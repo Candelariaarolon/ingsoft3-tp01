@@ -180,4 +180,164 @@ Usé Claude principalmente para traducir los comandos de ejemplo del profesor (p
 
 Problema que tuve con uso de IA, el chat de claude code en visual studio: en un momento del TP le pedí a Claude una revisión/verificación del estado del repo, y en respuesta ejecutó por su cuenta un comando en la parte de cache que yo no le había pedido, cambiando de rama en mi checkout local sin que se lo indicara. Lo interrumpí con un "NO HAGAS NADA" apenas lo vi. Ya le había pedido explícitamente antes que no ejecutara acciones y se limitara a darme los comandos para correr yo misma, y en ese momento no lo respetó. Después de eso volvió a comportarse como se le pidió: solo research de lectura (`git status`, `grep`, leer archivos) para poder darme comandos correctos, sin volver a ejecutar nada que cambiara el estado del repo.
 
+# TP5: Calidad automatizada
+
+## 1. Mi stack frente a la tabla de la guía
+
+La guía está escrita en .NET. Mi app es Next.js con TypeScript en backend y frontend, así que usé la columna JS/TS de la tabla «Tu stack, de un vistazo», con vitest en los dos lados:
+
+| Lo que pide la guía | .NET (ejemplos) | Lo que usé yo |
+|---|---|---|
+| Dónde viven los tests | Proyecto aparte | Al lado del código: `telefono.ts` → `telefono.test.ts` |
+| Test parametrizado | `[Theory]` + `[InlineData]` | `it.each` |
+| Que la dependencia entre desde afuera | Interfaz + constructor | Parámetro de la función |
+| Fabricar el doble | Moq | `vi.fn()` |
+| Medir la cobertura | coverlet | `@vitest/coverage-v8` (`vitest run --coverage`) |
+| Umbral que rompe el build | `coverlet.msbuild` + `/p:Threshold` | `coverage.thresholds` en `vitest.config.mts` |
+| Qué entra en la cuenta | `/p:Exclude` | `coverage.include` / `coverage.exclude` |
+| Reporte legible | ReportGenerator | reporters `html` y `json-summary` de vitest |
+| Herramientas de test en la etapa de tests | El SDK ya las trae | `npm ci` sin `--omit=dev` |
+
+Tres decisiones de herramienta:
+
+- **vitest 4 y no 5**: vitest 5 requiere Node 22 y mis imágenes usan `node:20-slim`.
+- **`vitest.config.mts` y no `vite.config.js`**: mi app no usa Vite. El contenido (provider, reporters, include, thresholds) es el mismo de la guía.
+- **No usé ReportGenerator para el Summary**: lo probé leyendo la salida de vitest y daba otro porcentaje (cuenta líneas y ramas distinto). Como el número que frena el build lo calcula vitest, la tabla del Summary sale del `coverage-summary.json` del mismo vitest. Así el Summary, el reporte y el umbral muestran el mismo número, que es lo que la guía pide en el §3.4.
+
+## 2. Qué lógica elegí testear y por qué esa
+
+Elegí la lógica donde un error le duele directamente a quien usa Curatta:
+
+| Regla | Si se rompe, la usuaria... |
+|---|---|
+| Teléfono (8 a 15 dígitos, normalizado) | No puede contactar a la vendedora: con ese número se arma el link de WhatsApp |
+| Matching: qué se le pide a la base (disponibles, tipos compatibles, sin las propias) | Ve su propia ropa en venta como resultado, o prendas ya vendidas |
+| Matching: umbral de 60 puntos, deportivo no se mezcla con calle, orden por parecido | Ve resultados que no se parecen a lo que buscó, o la mejor coincidencia al final |
+| Validaciones de publicar y editar (precio > 0, nombre, foto) y de registro (email, contraseña ≥ 8) | Publica una prenda gratis o se registra con datos inválidos |
+| "Una publicación vendida es definitiva" | Una prenda vendida vuelve a aparecer como disponible |
+| Sesión (firma del token, vencimiento, cookie `httpOnly`, logout) | Alguien entra a páginas privadas sin permiso, o una usuaria logueada queda afuera |
+| Análisis de Azure (extraer el JSON, exigir los 6 atributos, normalizar) | El matching compara mal, porque compara por igualdad exacta |
+| Frontend: edición, link de WhatsApp, formato de precios, antigüedad de la publicación | Los botones Editar y Marcar vendida fallan sin aviso, o el link de contacto se rompe |
+
+Resultado: 79 tests en el backend y 37 en el frontend, con parametrizados (`it.each`), casos de error y bordes (7/8 dígitos, 59,99/60 puntos, 7/8 caracteres, precio 0/1, 1/7/30 días).
+
+Para comprobar que los tests verifican de verdad y no solo ejecutan código, rompí a propósito cada regla (mutantes, §2.4): borrar el `excludeUserId`, cambiar `>=` por `>`, sacar la verificación de la firma del token, una cookie sin `httpOnly`, un logout que no borra, entre otras. En todos los casos se puso en rojo el test que corresponde.
+
+## 3. Refactors para poder testear y mockear
+
+Antes del TP5 varias reglas no se podían testear sin levantar la base, Azure o Next, porque la dependencia estaba escrita adentro de la función. El arreglo fue siempre el mismo: separar la regla de la infraestructura, y que la infraestructura entre por parámetro.
+
+- **Reglas metidas en las rutas** (`app/api/`): las pasé a `lib/validaciones.ts`. Las rutas ahora solo piden, delegan y responden. Además de poder testearlas, esto evitó la trampa del §2.4: después dejé las rutas afuera de la cobertura, y eso solo es honesto si ya no tienen reglas adentro.
+- **Matching** (`matchContraAnalisis`): tenía `prisma` adentro. Ahora recibe `buscarCandidatos`; la app le pasa `buscarCandidatosEnBase` y el test le pasa un `vi.fn()`. **Este es el test con mock**: verifica con `toHaveBeenCalledWith` qué le pide a la base (solo disponibles, de tipos compatibles y sin las publicaciones de quien busca). Las reglas no se movieron de la función.
+- **Sesión** (backend y frontend): leía las cookies de Next adentro. Separé la regla (`sesionDesdeToken`: firma, vencimiento, datos) y las cookies entran desde afuera. Las rutas y páginas siguen llamando `auth()` igual.
+- **Análisis de Azure**: separé `interpretarRespuestaModa` (la regla) de la llamada a Azure, que entra por parámetro.
+- **Frontend**: la edición de publicaciones tenía un `fetch` adentro del componente. Ahora `actualizarPublicacion` recibe el cliente HTTP y el cliente real vive en un solo lugar (`frontend/api/cliente.ts`).
+
+En todos los casos la dependencia real se pasa en un solo lugar, y si faltara TypeScript no compila. Lo verifiqué además con la app levantada en Docker: las respuestas de la API son las mismas que antes, `/api/publicaciones/buscar` respondió 200 contra la base real, y el login, el logout y las páginas privadas funcionan igual.
+
+## 4. Qué dejé afuera de la cuenta de cobertura
+
+Se mide solo `lib/` en los dos lados. Antes de escribir más tests revisé qué estaba entrando en la cuenta:
+
+| Qué | Decisión | Por qué |
+|---|---|---|
+| `backend/lib/prisma.ts` | Excluido | Es arranque: solo crea la conexión a la base, no tiene reglas |
+| Rutas de `app/api/` | Afuera | Ya no tienen reglas: las saqué a `lib/` |
+| Componentes y páginas del frontend | Afuera | Son pegamento de UI; su lógica está en `lib/` |
+| Clases de datos | No hay en `lib/` | Los modelos los genera Prisma en `node_modules` |
+| Código muerto de `azure-openai.ts` y del `session.ts` del frontend | **Borrado**, no excluido | Nadie lo usaba. Excluirlo hubiera sido esconderlo |
+
+Uso `include` de una carpeta y no una lista de archivos: con vitest 4, sin `include` solo se mide lo que los tests importan, y un archivo nuevo sin tests no entraría a la cuenta. Con `include: ["lib/**"]`, cualquier archivo nuevo en `lib/` entra solo, aunque nadie lo testee. Es lo que hizo que los PRs del §3.5 frenaran.
+
+## 5. Cómo llegué a la cobertura actual
+
+Así cambió la cobertura desde la primera medición hasta el cierre del TP:
+
+| | Primera medición | Final |
+|---|---|---|
+| Frontend | 30,76 % líneas / 50 % ramas | **95,55 % / 100 %** |
+| Backend | 50,69 % líneas / 41,81 % ramas | **87,09 % / 88,76 %** |
+
+En el §3.0 había hecho lo justo y necesario: los tests que pedía la Tarea 1. Cuando en el §3.1 y el §3.2 medí la cobertura, el frontend me dio 30,76 %, y al llegar al §3.3, donde aparece el umbral que rompe el build, me di cuenta de que poner el umbral sobre esa medición iba a ser un freno muy flojo. Antes de seguir se lo consulté al profesor: le conté que quería subir la cobertura testeando lo que faltaba antes de fijar el umbral, en vez de poner un umbral bajo sobre la primera medición.
+
+### Consulta al profesor
+
+Me contestó que lo había encarado mejor que si hubiera puesto un umbral bajo sobre la primera medición, que lo que más valía no era el número sino haber mirado el reporte, visto que `session.ts` estaba en 0 % y decidido que ahí un error duele, y que el 90 % para líneas y ramas estaba bien porque sale de mi medición y deja un margen chico. Me pidió tres cosas para cerrarlo:
+
+**1. Contar el recorrido del frontend y qué es lo que quedó sin cubrir.**
+
+- **Al principio, 30,76 % de líneas (12 de 39) y 50 % de ramas.** Solo tenían tests las reglas de edición de publicaciones del §3.0. Lo que más bajaba el número era `session.ts`, el `auth()` que decide si alguien está logueado, en 0 % porque leía la cookie de Next adentro de la función y no se podía testear sin un pedido real. `whatsapp.ts` y `format.ts` tampoco tenían tests.
+- **Qué testeé y por qué eso.** La sesión, porque si falla alguien entra a páginas privadas sin permiso o una usuaria logueada queda afuera: la abrí para que la cookie entre desde afuera y testeé la regla (token válido, firmado con otro secreto, vencido, sin email). También el link de WhatsApp, porque es la única forma de contactar a la vendedora, y el formato de precios. De paso borré el código muerto del `session.ts` del frontend (crear y borrar la cookie es trabajo del backend).
+- **Al final, 93,33 % de líneas (28 de 30) y 100 % de ramas**, con 27 tests.
+- **Qué es el 6,67 % sin cubrir: 2 líneas de 30**, las de `leerTokenDeCookie`, que solo le piden la cookie a Next. No tienen ninguna regla propia; lo verifiqué con la app levantada: con sesión las páginas privadas abren y sin sesión redirigen al login.
+
+Después, en el §3.5, el frontend subió a 95,55 % (43 de 45) porque `antiguedadDePublicacion` entró con un test por cada camino. Las 2 líneas sin cubrir siguen siendo las mismas.
+
+**2. En el backend, mirar primero qué entra en la cuenta, sacar el arranque y las clases de datos, y después testear.**
+
+Eso es lo que hice, en ese orden:
+
+- **Primera medición: 50,69 % de líneas y 41,81 % de ramas.** Antes de escribir más tests miré qué estaba entrando: `prisma.ts`, que es arranque (solo crea la conexión a la base), y bastante código muerto en `azure-openai.ts` que nadie importaba. Clases de datos no había en `lib/`: los modelos los genera Prisma en `node_modules`. Las rutas de `app/api/` ya quedaban afuera porque les había sacado las reglas a `lib/validaciones.ts`.
+- **Qué saqué y por qué**: excluí `prisma.ts` por ser arranque, y el código muerto lo borré en vez de excluirlo, porque excluirlo hubiera sido esconderlo (detalle en la sección 4). Con eso y los tests de `password.ts` y `esEstadoValido`, quedó en **57,62 % / 52,87 %**.
+- **Después testeé las reglas que importan**: la sesión (firma, vencimiento, cookie `httpOnly`, logout) y el análisis de Azure (extraer el JSON, exigir los 6 atributos, normalizar), con el mismo refactor que en el frontend, y el aviso de `createClient` cuando falta una variable de Azure. Quedó en **87,09 % de líneas y 88,76 % de ramas**.
+- No llega a 90 como el frontend, y el profesor aclaró que no hace falta: el número sale de lo que mido. Lo que falta es infraestructura: la consulta de Prisma (`buscarCandidatosEnBase`), la llamada a Azure (`pedirAlModeloAzure`) y la lectura de cookies de Next. Por eso el umbral del backend es 85 % (sección 6).
+
+**3. Para el §3.5, hacer la cuenta antes.**
+
+El porcentaje es de todo lo medido, así que el código nuevo sin tests tiene que alcanzar para bajar de mi número a menos del umbral:
+
+- **PR #32**: el frontend tenía 28 líneas cubiertas de 30. Para quedar debajo del 90 % alcanzaban 2 líneas sin cubrir (28/32 = 87,5 %), pero la guía pide código de verdad y no dos líneas, así que agregué una función de unas 12 líneas con varios caminos. Esperaba quedar cerca del 67 %, y dio 66,66 % de líneas y 63,33 % de ramas.
+- **PR #33**: después del merge del #32, el frontend tenía 43 de 45 líneas. Hacían falta al menos 3 líneas sin cubrir (43/48 = 89,6 %); agregué un archivo nuevo (`lib/ventas.ts`) de unas 20 líneas, y quedó en 74,13 % de líneas y 78,94 % de ramas.
+
+## 6. Umbrales
+
+| | Umbral | Métrica | Medición al fijarlo |
+|---|---|---|---|
+| Frontend | **90 %** | Líneas y ramas | 93,33 % líneas / 100 % ramas |
+| Backend | **85 %** | Líneas y ramas | 87,09 % líneas / 88,76 % ramas |
+
+Los dos salen de mi medición real y quedan unos puntos por debajo, para que pasen hoy y frenen si entra código sin tests. Pongo umbral en las dos métricas porque la de líneas es la que más puede mentir: un `if` recorrido por un solo camino da 100 % de líneas y 50 % de ramas.
+
+Antes de fijarlos verifiqué que frenan de verdad: en el frontend, apagar los tests de WhatsApp lo baja a 86,66 %; en el backend, apagar los de azure-openai lo baja a 81,45 % de líneas y 82,02 % de ramas. El backend no llega a 90 como el frontend porque lo que falta cubrir es infraestructura; para subirlo tendría que agregar tests de integración contra la base y Azure, y tests end-to-end para las cookies (TP7).
+
+## 7. El ejercicio de la rama sin cubrir
+
+1. **Qué línea**: `backend/lib/matching-publicaciones.ts`, línea 38, el `?? [tipoPrenda]` de `tiposCompatibles`. No había ningún `if` a la vista: la rama la abría el `??`. Es el camino que toma el matching cuando el tipo de prenda no está en ningún grupo de compatibles.
+2. **Qué entrada la recorre**: un análisis con `tipo_prenda: "blazer"`. Todos mis tests usaban `"jean"`, que sí tiene grupo.
+3. **Qué decidí**: agregar el test ("si el tipo de prenda no tiene compatibles, le pide a la base solo ese tipo"). La mayoría de los tipos (blazer, falda, sweater, cardigan, abrigo, zapatos, jogger) no tienen grupo y pasan siempre por esa rama, así que la rama sin cubrir era la que usan casi todas las búsquedas. Si alguien cambia `[tipoPrenda]` por `[]`, buscar un blazer devuelve siempre "No encontramos prendas parecidas"; lo comprobé rompiéndolo a propósito y el test nuevo se puso en rojo.
+
+La cobertura me mostró dónde mirar, pero la decisión salió de entender el código: el 80 % de ramas de ese archivo no decía que el camino sin cubrir era el más usado.
+
+## 8. Por qué cobertura alta no garantiza calidad
+
+Si mi test de `setSessionCookie` solo llamara a la función sin mirar qué guardó, la cobertura sería exactamente la misma: todas las líneas se ejecutan igual. Pero si alguien sacara el `httpOnly` de la cookie de sesión, nadie se enteraría y el token quedaría expuesto a JavaScript. Como mi test sí verifica las opciones con las que se guardó la cookie, al sacarle el `httpOnly` a propósito se puso en rojo. El número de cobertura es igual en los dos casos: lo que cambia es el `expect`. Por eso además de medir cobertura corrí mutantes: la cobertura dice qué se ejecutó, no qué se verificó.
+
+## 9. El freno funcionando
+
+El freno no necesitó configuración nueva: la cobertura corre adentro de los mismos jobs `build-backend` y `build-frontend`, que son required checks de `main` desde el TP4. La diferencia con el TP4 es que antes esos jobs solo se ponían en rojo si el código no compilaba; ahora también si la cobertura queda debajo del umbral, aunque todo compile y todos los tests pasen.
+
+- **Resumen de cobertura y reporte descargable (backend y frontend)**: [corrida](https://github.com/Candelariaarolon/ingsoft3-tp01/actions/runs/37714391219)
+- **Rojo por umbral en el frontend** (§3.3, tests de WhatsApp apagados): [corrida](https://github.com/Candelariaarolon/ingsoft3-tp01/actions/runs/37764515231). 24 tests pasaron y frenó por **líneas** (86,66 % contra 90 %). Las ramas siguieron en 100 % porque `linkWhatsapp` no tiene ningún `if`.
+- **Rojo por umbral en el backend** (§3.4, tests de azure-openai apagados): [corrida](https://github.com/Candelariaarolon/ingsoft3-tp01/actions/runs/37859813967). 74 tests pasaron y frenó por **líneas y ramas** (81,45 % y 82,02 % contra 85 %), porque `createClient` sí tiene un `if`.
+- **PR bloqueado, secuencia completa** (§3.5): [PR #32](https://github.com/Candelariaarolon/ingsoft3-tp01/pull/32). Agregué `antiguedadDePublicacion` sin tests: compilaba y los 27 tests pasaban, pero `build-frontend` quedó rojo ([corrida](https://github.com/Candelariaarolon/ingsoft3-tp01/actions/runs/38083650719)) por **líneas y ramas** (66,66 % y 63,33 % contra 90 %), con vitest 4.1.11, que desde la versión 4 cuenta las ramas de una función que nunca se ejecuta. Lo arreglé con un test por cada camino de la función, incluidos los bordes de 1, 7 y 30 días; volvió a verde y lo mergeé.
+- **El freno vigente** (§3.5): [PR #33](https://github.com/Candelariaarolon/ingsoft3-tp01/pull/33), abierto y en rojo hasta la defensa. Agrega `lib/ventas.ts` sin tests y queda en 74,13 % de líneas y 78,94 % de ramas.
+
+Lo que este freno deja pasar igual: código con tests que ejecutan pero no verifican, y reglas que entendí mal, porque mis tests congelan lo que yo entendí del requisito. Eso solo lo detecta quien sabe qué se quiso pedir, mirando el PR.
+
+## 10. Problemas encontrados
+
+- **vitest 5 necesita Node 22** y mis imágenes usan Node 20, así que usé vitest 4.
+- **ReportGenerator daba otro número que vitest** para la misma corrida; lo resolví armando el Summary desde el `coverage-summary.json` de vitest (sección 1).
+- **No pude crear la rama `fix/puertos`** porque ya existía una rama local llamada `fix`, y Git no deja tener `fix` y `fix/algo` al mismo tiempo. Como el `checkout -b` falló, el commit quedó en `main` local; lo moví a una rama `fix-puertos` y devolví `main` a como estaba en GitHub antes de pushear.
+- **Hice un commit con el mensaje "tu mensaje"** al copiar un comando de ejemplo sin reemplazarlo; lo corregí con `git commit --amend` antes del push.
+- **Mis commits aparecían con otra cuenta de GitHub.** El email que uso en la terminal está asociado a mi segunda cuenta (`candelariarolon`), así que GitHub le adjudicaba los commits a esa cuenta y no a la dueña del repo (`Candelariaarolon`). Configuré el email de `Candelariaarolon` solo para este repo; los commits anteriores quedaron como estaban.
+- **Nombres de tests confusos**: en un `it.each`, el segundo `%s` del nombre tomaba el dato de entrada y no el resultado esperado ("ok es aaaaaaaa"). Los reescribí, porque el nombre del test es el diagnóstico cuando falla.
+
+## 11. Declaración de uso de IA
+
+Usé Claude Code (en VS Code) durante el TP5. Esta vez le permití editar archivos y correr comandos (instalar dependencias, correr tests, levantar la app con Docker), pero todos los commits, pushes, PRs y merges los hice yo, con mis mensajes.
+
+Lo usé para traducir la guía de .NET a mi stack, escribir tests conmigo y armar los pasos del pipeline. Las decisiones las tomé yo: qué reglas testear, testear la sesión en vez de excluirla, los dos umbrales (se los consulté al profesor) y agregar el test de la rama sin cubrir.
+
+Cómo verifiqué lo que produjo: leí qué comprueba cada `expect`; rompí a propósito cada regla (mutantes) para confirmar que algún test se pusiera en rojo; simulé el pipeline en mi máquina (la etapa de tests del Dockerfile con el volumen montado) antes de pushear; y levanté la app con Docker para confirmar con `curl` y en el navegador que los refactors no cambiaron el comportamiento.
 
