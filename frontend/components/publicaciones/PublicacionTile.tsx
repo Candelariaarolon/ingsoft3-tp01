@@ -3,7 +3,13 @@
 import { useState } from "react";
 import { enviarJson } from "@/api/cliente";
 import { formatARS } from "@/lib/format";
-import { actualizarPublicacion, validarEdicion, type Publicacion } from "@/lib/publicaciones";
+import {
+  actualizarPublicacion,
+  antiguedadDePublicacion,
+  TEXTO_ANTIGUEDAD,
+  validarEdicion,
+  type Publicacion,
+} from "@/lib/publicaciones";
 
 export type { Publicacion };
 
@@ -114,6 +120,11 @@ export default function PublicacionTile({
             <p className="mb-2 font-serif text-[15px] font-semibold text-negro">
               {formatARS(publicacion.precio)}
             </p>
+            {TEXTO_ANTIGUEDAD[antiguedadDePublicacion(publicacion.createdAt)] && (
+              <p className="mb-2 text-[11px] text-negro/45">
+                {TEXTO_ANTIGUEDAD[antiguedadDePublicacion(publicacion.createdAt)]}
+              </p>
+            )}
           </>
         )}
 

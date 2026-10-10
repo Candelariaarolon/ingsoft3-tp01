@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { actualizarPublicacion, validarEdicion, type Publicacion } from "./publicaciones";
+import {
+  actualizarPublicacion,
+  antiguedadDePublicacion,
+  TEXTO_ANTIGUEDAD,
+  validarEdicion,
+  type Publicacion,
+} from "./publicaciones";
 
 const jean: Publicacion = {
   id: "pub-1",
@@ -79,5 +85,45 @@ describe("actualizarPublicacion", () => {
     await expect(actualizarPublicacion("pub-1", { precio: 2000 }, enviar)).rejects.toThrow(
       "No pudimos guardar los cambios"
     );
+  });
+});
+
+describe("antiguedadDePublicacion", () => {
+  // `ahora` fijo: el test no depende del reloj (regla de determinismo del §2.2).
+  const ahora = new Date("2026-10-10T12:00:00Z");
+
+  it.each([
+    ["sin fecha de creación", undefined],
+    ["con una fecha que no se puede leer", "no-es-una-fecha"],
+  ])("devuelve sin-fecha si la publicación viene %s", (_caso, createdAt) => {
+    expect(antiguedadDePublicacion(createdAt, ahora)).toBe("sin-fecha");
+  });
+
+  it("devuelve nueva dentro del primer día", () => {
+    expect(antiguedadDePublicacion("2026-10-10T06:00:00Z", ahora)).toBe("nueva");
+  });
+
+  it("devuelve esta-semana antes de los siete días", () => {
+    expect(antiguedadDePublicacion("2026-10-07T12:00:00Z", ahora)).toBe("esta-semana");
+  });
+
+  it("devuelve este-mes antes de los treinta días", () => {
+    expect(antiguedadDePublicacion("2026-09-25T12:00:00Z", ahora)).toBe("este-mes");
+  });
+
+  it("devuelve mas-de-un-mes pasados los treinta días", () => {
+    expect(antiguedadDePublicacion("2026-08-01T12:00:00Z", ahora)).toBe("mas-de-un-mes");
+  });
+
+  it.each([
+    ["justo 1 día", "2026-10-09T12:00:00Z", "esta-semana"],
+    ["justo 7 días", "2026-10-03T12:00:00Z", "este-mes"],
+    ["justo 30 días", "2026-09-10T12:00:00Z", "mas-de-un-mes"],
+  ])("en el borde de %s pasa a la categoría siguiente", (_caso, createdAt, esperado) => {
+    expect(antiguedadDePublicacion(createdAt, ahora)).toBe(esperado);
+  });
+
+  it("sin fecha no muestra ningún texto en la tarjeta", () => {
+    expect(TEXTO_ANTIGUEDAD["sin-fecha"]).toBe("");
   });
 });
