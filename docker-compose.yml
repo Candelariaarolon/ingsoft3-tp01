@@ -42,10 +42,7 @@ services:
       start_period: 10s
 
   frontend:
-    build:
-      context: ./frontend
-      args:
-        BACKEND_URL: http://backend:4000
+    build: ./frontend
     environment:
       JWT_SECRET: ${JWT_SECRET}
       BACKEND_URL: http://backend:4000
