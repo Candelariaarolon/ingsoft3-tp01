@@ -201,14 +201,19 @@ jobs:
             # Todos los chequeos van DENTRO del if, como en la guía: GitHub corre
             # bash con -e, y un curl que falla fuera de un if corta el paso en la
             # primera vuelta en vez de dejar que el loop reintente.
+            # Exige el commit en la api Y en el front: cada uno se despliega con su
+            # propio hook, y si uno no se desplegó, el otro solo no alcanza.
+            COMMIT=""; FRONT=""
             if COMMIT=$(curl -fsS --max-time 10 "$URL_API/api/health" | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p') \
                && [ "$COMMIT" = "$GITHUB_SHA" ] \
+               && FRONT=$(curl -fsS --max-time 10 "$URL_FRONT/health" | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p') \
+               && [ "$FRONT" = "$GITHUB_SHA" ] \
                && curl -fsS --max-time 10 -o /dev/null "$URL_API/api/health/db" \
                && curl -fsS --max-time 10 -o /dev/null "$URL_FRONT/" \
                && curl -fsS --max-time 10 -o /dev/null "$URL_FRONT/api/health/db"; then
-              echo "✅ QA corre $GITHUB_SHA: api, base y front responden"; exit 0
+              echo "✅ QA corre $GITHUB_SHA en la api y en el front, y la base responde"; exit 0
             fi
-            echo "vuelta $i: la api corre ${COMMIT:-nada todavía}, espero $GITHUB_SHA"
+            echo "vuelta $i: api ${COMMIT:-sin respuesta}, front ${FRONT:-sin respuesta}, espero $GITHUB_SHA"
             sleep 20
           done
           echo "❌ QA no quedó corriendo $GITHUB_SHA a tiempo"; exit 1
@@ -249,14 +254,19 @@ jobs:
           for i in $(seq 1 45); do
             # Mismo smoke que QA: todos los chequeos dentro del if, para que un
             # timeout del cold start cuente como "todavía no" y no corte el paso.
+            # Exige el commit en la api Y en el front: cada uno se despliega con su
+            # propio hook, y si uno no se desplegó, el otro solo no alcanza.
+            COMMIT=""; FRONT=""
             if COMMIT=$(curl -fsS --max-time 10 "$URL_API/api/health" | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p') \
                && [ "$COMMIT" = "$GITHUB_SHA" ] \
+               && FRONT=$(curl -fsS --max-time 10 "$URL_FRONT/health" | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p') \
+               && [ "$FRONT" = "$GITHUB_SHA" ] \
                && curl -fsS --max-time 10 -o /dev/null "$URL_API/api/health/db" \
                && curl -fsS --max-time 10 -o /dev/null "$URL_FRONT/" \
                && curl -fsS --max-time 10 -o /dev/null "$URL_FRONT/api/health/db"; then
-              echo "✅ PROD corre $GITHUB_SHA: api, base y front responden"; exit 0
+              echo "✅ PROD corre $GITHUB_SHA en la api y en el front, y la base responde"; exit 0
             fi
-            echo "vuelta $i: la api corre ${COMMIT:-nada todavía}, espero $GITHUB_SHA"
+            echo "vuelta $i: api ${COMMIT:-sin respuesta}, front ${FRONT:-sin respuesta}, espero $GITHUB_SHA"
             sleep 20
           done
           echo "❌ PROD no quedó corriendo $GITHUB_SHA a tiempo"; exit 1
