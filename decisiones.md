@@ -341,3 +341,85 @@ Lo usé para traducir la guía de .NET a mi stack, escribir tests conmigo y arma
 
 Cómo verifiqué lo que produjo: leí qué comprueba cada `expect`; rompí a propósito cada regla (mutantes) para confirmar que algún test se pusiera en rojo; simulé el pipeline en mi máquina (la etapa de tests del Dockerfile con el volumen montado) antes de pushear; y levanté la app con Docker para confirmar con `curl` y en el navegador que los refactors no cambiaron el comportamiento.
 
+
+---
+
+# TP6: Entrega continua: entornos, aprobación y despliegue
+
+## Enlaces de este TP
+
+**El artefacto (Tarea 1)**
+
+- Paquete público del backend: [ingsoft3-tp01-backend](https://github.com/Candelariaarolon/ingsoft3-tp01/pkgs/container/ingsoft3-tp01-backend), etiquetado `sha-486fac823a7249fc94d6584f0faa8241ca9c61ff` (el merge del PR #35).
+- Paquete público del frontend: [ingsoft3-tp01-frontend](https://github.com/Candelariaarolon/ingsoft3-tp01/pkgs/container/ingsoft3-tp01-frontend), mismo tag.
+- Eslabón 2, sólo `main` publica: [job del PR #35](https://github.com/Candelariaarolon/ingsoft3-tp01/actions/runs/38296933814/job/114970156619). Tests en verde y «Entrar al registry» salteado.
+- Eslabón 3, publicar es lo último: [job de la corrida de `main`](https://github.com/Candelariaarolon/ingsoft3-tp01/actions/runs/38298894032/job/114976659969). «Construir y publicar la imagen» es el último paso, después de los tests.
+
+**Los entornos (Tareas 2 a 4)**: _pendiente_.
+
+## 1. El artefacto: por qué se publica sólo con la verificación en verde
+
+Hasta el TP5 el pipeline verificaba y no dejaba nada: la imagen nacía y moría en el runner. Ahora cada merge a `main` publica las dos imágenes en `ghcr.io`, etiquetadas con el commit que las produjo (`sha-<commit>`).
+
+Que en el registry sólo haya imágenes verificadas no depende de un control nuevo, sino de tres cosas encadenadas:
+
+1. **Nada entra a `main` sin verde**: `build-backend` y `build-frontend` son required checks desde el TP4, y desde el TP5 incluyen el umbral de cobertura.
+2. **Sólo `main` publica**: el `push:` del paso que publica vale `github.event_name == 'push' && github.ref == 'refs/heads/main'`. En un PR el paso construye la imagen (eso verifica que la imagen final compila), pero no la sube. Puse la condición en el paso que publica y no sólo en el disparador del workflow: si un día agrego otra rama al `on:`, no publica igual.
+3. **Publicar es el último paso del mismo job que corre los tests.** No hay ningún `if` que diga «si los tests pasaron»: los pasos corren en orden y el job se corta en el primer error, así que si los tests fallan, el paso de publicar nunca llega a ejecutarse. Por eso moví el build de la imagen final del principio del job (donde estaba en el TP4) al final, y los pasos que publican no llevan `!cancelled()` (el reporte de cobertura sí, a propósito).
+
+Si se publicara igual con los tests en rojo, estar en el registry dejaría de significar «esto pasó la verificación», y el registry sería un depósito de cosas que alguien construyó alguna vez.
+
+**Lo que la cadena no garantiza**: protege lo que publica *el pipeline*, no lo que físicamente puede entrar. Yo podría hacer `docker push` a mano desde mi máquina con mi token y pisar un tag `sha-…`, porque un tag es un nombre que se puede mover. Lo que identifica una imagen de forma inmutable es su **digest** (`sha256:…`, el hash del contenido).
+
+`permissions: packages: write` está declarado **por job** y no a nivel workflow: a nivel workflow reemplazaría el default de todos los jobs, y sólo el que publica necesita escribir paquetes (mínimo privilegio). No hizo falta ningún secret: el `GITHUB_TOKEN` lo crea GitHub para cada corrida y vence con el job.
+
+## 2. Cómo me adapté al registry
+
+- **El nombre va en minúsculas y escrito a mano.** `${{ github.repository }}` devuelve `Candelariaarolon/ingsoft3-tp01`, con mayúscula, y `ghcr.io` la rechaza.
+- **Paquetes nuevos (`ingsoft3-tp01-*`) en vez de los `curatta-*` del TP2.** Aquellos los subí a mano con mi token personal y no están vinculados al repo, así que el `GITHUB_TOKEN` del pipeline no puede escribir en ellos. Los nuevos los creó el primer push del pipeline, ya vinculados.
+- **Paquetes públicos**, para que cualquiera los baje sin credenciales. Lo comprobé con `docker pull` usando una configuración de Docker vacía (sin login).
+- **La fecha de creación de la imagen es anterior al merge.** `docker image inspect` dice 10/10 para el tag del 12/10 porque el pipeline reusó la caché (`cache-from: type=gha`): el código de las imágenes no cambió desde el TP5 y el resultado es la misma imagen. La etiqueta sigue diciendo de qué commit salió.
+
+## 3. La base de datos: Neon
+
+- **Un proyecto nuevo (`curatta-tp6`) con dos bases, `app_qa` y `app_prod`**, en el mismo servidor. No reusé mis proyectos anteriores de Neon: uno tiene datos que no quiero que pisen las migraciones del TP6, y el otro está en São Paulo, donde Render no tiene servidores.
+- **Región AWS US East 2 (Ohio)**, la misma que elijo para los servicios en Render, para que cada consulta no cruce el continente.
+- **Postgres 16**, la misma versión que mi `docker-compose.yml` (`postgres:16-alpine`), donde están probadas las migraciones.
+- **Por qué no el Postgres de Render**: su plan gratuito expira a los 30 días, antes de la defensa. El de Neon es permanente (con límites: 0,5 GB, y el cómputo se suspende a los ~5 minutos sin uso).
+- **Conexión directa, sin pooler.** El backend corre `prisma migrate deploy` al arrancar, y las migraciones necesitan la conexión directa. Le saqué a la URI el `channel_binding=require` y dejé `sslmode=require`.
+- **El esquema lo crea la app**: el `CMD` del backend corre `prisma migrate deploy` antes de `npm start`, así que las tablas aparecen solas la primera vez que el servicio arranca en cada entorno. Antes del primer deploy, `select count(*) from "User";` en `app_qa` contesta *relation "User" does not exist*, como corresponde a una base vacía.
+- **Limitación honesta**: las dos bases tienen el mismo dueño (`app_qa_owner`), es decir, el mismo usuario y contraseña; sólo cambia el nombre de la base. Con la cadena de conexión de QA alguien podría conectarse a PROD cambiando una palabra. En una empresa real cada entorno tendría su propio usuario.
+
+## 4. Preparar la app para desplegarla
+
+La guía asume .NET y un front servido por nginx. Mi app es Next.js en los dos lados, y hubo que cambiar tres cosas antes de desplegar:
+
+| La guía asume | Mi app tenía | Qué hice |
+|---|---|---|
+| `/health` existe | Nada parecido. `/api/auth/me` contesta 200 siempre, pero no toca la base | `/api/health` (el proceso está vivo, y devuelve el commit que corre) y `/api/health/db` (hace `SELECT 1`; si la base no responde, 503) |
+| La plantilla de nginx lee `${BACKEND_URL}` al arrancar | `rewrites()` de Next: la dirección del backend se resolvía en `next build` y quedaba **horneada en la imagen** (`ARG BACKEND_URL`) | Saqué `rewrites()` y el `ARG`. Un route handler (`app/api/[...ruta]/route.ts`) reenvía `/api/*` al backend leyendo `BACKEND_URL` **en cada pedido**. La lógica (armar la URL, filtrar encabezados) está en `lib/proxy.ts`, con tests |
+| El backend escucha en `0.0.0.0` | El back sí (`next start`). El front standalone escucha en `HOSTNAME`, y Docker y Render ponen ahí el nombre del contenedor | `ENV HOSTNAME=0.0.0.0` en el Dockerfile del front |
+
+**Qué queda en la imagen y qué entra por variable de entorno**:
+- **Adentro de la imagen:** el código compilado, las dependencias y las migraciones.
+- **Por variable:**
+  - en el front, `BACKEND_URL` (con `http://backend:4000` por defecto, que es lo que usa compose);
+  - en el back, `DATABASE_URL`, `JWT_SECRET` y las credenciales de Azure OpenAI.
+
+Por eso la misma imagen del front sirve en QA y en PROD, y cada una habla con su api. Es lo que va a permitir el TP7.
+
+El navegador sigue hablándole sólo al front (mismo origen), así que la cookie de sesión `httpOnly` funciona sin CORS. Probé con `docker compose` el registro, el login (la cookie llega al navegador), `/api/auth/me`, las publicaciones, una página protegida, el logout y un cuerpo de 3 MB, todo pasando por el proxy. Los 44 tests del front pasan y la cobertura subió a 96,36 % de líneas y 100 % de ramas.
+
+## Problemas encontrados (hasta acá)
+
+- **Pegué la cadena de conexión con la contraseña en el chat con la IA.** La traté como expuesta: reseteé la contraseña del rol en Neon y cargué la nueva en los dos servicios. La cadena de conexión sólo vive en las variables de Render.
+- **La api de PROD no arrancaba (`P1001: Can't reach database server`).** Había un carácter de más en la contraseña de la `DATABASE_URL` de PROD. El error aparecía un segundo después de intentar conectarse, así que no era Neon tardando en despertar, sino la conexión rechazada. Además agregué `connect_timeout=15` a las dos URIs: Neon suspende el cómputo a los ~5 minutos sin uso, y Prisma espera sólo 5 segundos por defecto.
+- **El front de QA no reconocía la sesión.** El login andaba, pero las páginas protegidas me mandaban al login. Mi front verifica la cookie del lado del servidor, así que necesita el mismo `JWT_SECRET` que el backend de su entorno. Lo había editado en Render sin redesplegar, y con Auto-Deploy en Off una variable nueva no se aplica hasta el próximo deploy. Es un caso de «el build en verde, el servicio Live y el entorno roto»: `/api/health` daba 200.
+- **502 del front a través del proxy.** Las api estaban dormidas (el plan gratis las duerme a los 15 minutos) y tardaron ~32 s en despertar; mientras tanto el proxy devolvía 502. Es la razón por la que el smoke reintenta.
+- **El primer smoke de QA cortó en la primera vuelta.** GitHub Actions corre los scripts con `bash -e -o pipefail`, y yo había dejado el primer `curl` fuera del `if`: el timeout del cold start abortaba el paso en vez de dejar que el loop reintentara. Lo corregí poniendo todos los chequeos dentro de la condición, como en la guía, y lo verifiqué corriendo el script con esas mismas opciones contra un servicio que no contesta, uno que corre otro commit y uno que corre el esperado.
+- **Aprobé por error el primer deploy a PROD y cancelé el workflow.** Cancelar no deshizo nada: el hook ya había llegado a Render y PROD quedó con el commit nuevo. Una vez disparado el hook, la única vuelta atrás es el rollback (disparar el hook con el sha anterior). No hizo falta, porque ese commit sólo cambiaba `ci.yml` y la app era la misma.
+
+<!-- Pendiente (se completa a medida que avanza el TP6): Render y cómo cumplo los 5 puntos del contrato,
+Continuous Delivery vs Deployment, diseño de la cadena (needs/if/environments) y alcance de los secrets,
+qué garantía pierdo porque Render reconstruye, qué prueba el smoke y qué no, criterios del aprobador,
+letra chica del free tier, deployment pattern + rollback medido, problemas, declaración de IA. -->
