@@ -23,8 +23,9 @@ export default function HeroPublico() {
         </h1>
 
         <p className="mx-auto mb-9 max-w-md text-[16.5px] leading-relaxed text-crema/85">
-          Subí una foto de la prenda que buscás. Curatta la compara con las
-          publicaciones de la comunidad y te muestra las más parecidas.
+          Subí una foto de la prenda que buscás. Curatta la compara con la
+          ropa de segunda mano que publica la comunidad y te muestra las más
+          parecidas.
         </p>
 
         <div className="flex flex-wrap justify-center gap-3.5">
