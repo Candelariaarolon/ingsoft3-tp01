@@ -198,8 +198,11 @@ jobs:
           URL_FRONT: https://curatta-front-qa.onrender.com
         run: |
           for i in $(seq 1 45); do
-            COMMIT=$(curl -fsS --max-time 10 "$URL_API/api/health" | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p')
-            if [ "$COMMIT" = "$GITHUB_SHA" ] \
+            # Todos los chequeos van DENTRO del if, como en la guía: GitHub corre
+            # bash con -e, y un curl que falla fuera de un if corta el paso en la
+            # primera vuelta en vez de dejar que el loop reintente.
+            if COMMIT=$(curl -fsS --max-time 10 "$URL_API/api/health" | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p') \
+               && [ "$COMMIT" = "$GITHUB_SHA" ] \
                && curl -fsS --max-time 10 -o /dev/null "$URL_API/api/health/db" \
                && curl -fsS --max-time 10 -o /dev/null "$URL_FRONT/" \
                && curl -fsS --max-time 10 -o /dev/null "$URL_FRONT/api/health/db"; then
