@@ -167,66 +167,57 @@ jobs:
   # verde no hay deploy, y en un PR no corre (sólo lo integrado a main despliega).
   deploy-qa:
     runs-on: ubuntu-latest
-    needs: [build-backend, build-frontend]
+    needs: [build-backend, build-frontend]   # sin CI verde no hay imagen
     if: github.ref == 'refs/heads/main'
     # Con esto el job ve los secrets del environment qa (los hooks) y cada
     # deploy queda en el historial de Deployments del repo. QA no tiene reglas
     # de protección: es automático a propósito.
     environment: qa
     steps:
-      # El &ref= es lo que hace que se despliegue EL commit verificado y no la
-      # punta de main: con dos merges seguidos, sin esto la corrida del primero
-      # desplegaría el segundo. Va con & porque el hook ya trae ?key=.
-      # Render vuelve a construir ese commit desde el repo: se despliega el
-      # commit verificado, no la imagen verificada (eso lo cambia el TP7).
-      - name: Disparar el deploy de QA en Render, del commit verificado
+      # El hook ya no dice qué commit construir: dice qué IMAGEN ejecutar, la
+      # sha-<commit> que publicaron los jobs de build de esta misma corrida.
+      # --get --data-urlencode la agrega con '&' (el hook ya trae ?key=…) y le
+      # codifica los ':' y '/'. La URL del hook va última: es el único argumento
+      # suelto, y --data-urlencode se lleva el valor que tiene al lado.
+      # El nombre va a mano y en minúsculas, igual que en los jobs de build.
+      - name: Desplegar en QA la IMAGEN del commit (api + front)
+        shell: bash
         env:
           HOOK_API: ${{ secrets.RENDER_HOOK_API_QA }}
           HOOK_FRONT: ${{ secrets.RENDER_HOOK_FRONT_QA }}
         run: |
-          curl -fsS --max-time 30 -o /dev/null "$HOOK_API&ref=$GITHUB_SHA"
-          curl -fsS --max-time 30 -o /dev/null "$HOOK_FRONT&ref=$GITHUB_SHA"
+          IMG_API="ghcr.io/candelariaarolon/ingsoft3-tp01-backend:sha-${{ github.sha }}"
+          IMG_FRONT="ghcr.io/candelariaarolon/ingsoft3-tp01-frontend:sha-${{ github.sha }}"
+          curl -fsS --max-time 30 --get --data-urlencode "imgURL=$IMG_API" "$HOOK_API"
+          curl -fsS --max-time 30 --get --data-urlencode "imgURL=$IMG_FRONT" "$HOOK_FRONT"
 
-      # Reintenta porque Render tarda en construir y el plan gratis duerme los
-      # servicios (el primer pedido tarda ~30 s). Mientras construye, Render
-      # sigue sirviendo la versión anterior, que también contesta 200: por eso
-      # no alcanza con que responda, tiene que estar corriendo ESTE commit.
-      - name: Smoke test de QA, espera a que corra este commit
+      # Reintenta porque el plan gratis duerme los servicios (el primer pedido
+      # tarda ~30 s). Prueba que QA responde: la api, la base (/api/health/db) y
+      # el front. No prueba qué imagen corre: eso se mira en Events de Render.
+      - name: Smoke test (espera a que QA responda)
         shell: bash
         env:
           URL_API: https://curatta-api-qa.onrender.com
           URL_FRONT: https://curatta-front-qa.onrender.com
         run: |
-          for i in $(seq 1 45); do
-            # Todos los chequeos van DENTRO del if, como en la guía: GitHub corre
-            # bash con -e, y un curl que falla fuera de un if corta el paso en la
-            # primera vuelta en vez de dejar que el loop reintente.
-            # Exige el commit en la api Y en el front: cada uno se despliega con su
-            # propio hook, y si uno no se desplegó, el otro solo no alcanza.
-            COMMIT=""; FRONT=""
-            if COMMIT=$(curl -fsS --max-time 10 "$URL_API/api/health" | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p') \
-               && [ "$COMMIT" = "$GITHUB_SHA" ] \
-               && FRONT=$(curl -fsS --max-time 10 "$URL_FRONT/health" | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p') \
-               && [ "$FRONT" = "$GITHUB_SHA" ] \
-               && curl -fsS --max-time 10 -o /dev/null "$URL_API/api/health/db" \
-               && curl -fsS --max-time 10 -o /dev/null "$URL_FRONT/" \
-               && curl -fsS --max-time 10 -o /dev/null "$URL_FRONT/api/health/db"; then
-              echo "✅ QA corre $GITHUB_SHA en la api y en el front, y la base responde"; exit 0
+          echo "Esperando a que QA esté vivo..."
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 10 "$URL_API/api/health" > /dev/null \
+               && curl -fsS --max-time 10 "$URL_API/api/health/db" > /dev/null \
+               && curl -fsS --max-time 10 "$URL_FRONT/" > /dev/null; then
+              echo "✅ QA responde (API + BD + front)"; exit 0
             fi
-            echo "vuelta $i: api ${COMMIT:-sin respuesta}, front ${FRONT:-sin respuesta}, espero $GITHUB_SHA"
             sleep 20
           done
-          echo "❌ QA no quedó corriendo $GITHUB_SHA a tiempo"; exit 1
+          echo "❌ QA no respondió a tiempo"; exit 1
 
-  # PROD sólo después de QA vivo con este commit. No repite el if de la rama:
-  # depende de deploy-qa, que sí lo tiene, así que en un PR ninguno de los dos
-  # corre.
+  # PROD sólo después de QA. No repite el if de la rama: depende de deploy-qa,
+  # que sí lo tiene, así que en un PR ninguno de los dos corre.
   deploy-prod:
     runs-on: ubuntu-latest
     needs: deploy-qa
     # El environment production tiene un required reviewer: acá la corrida se
-    # pausa en "Waiting for review" hasta que alguien apruebe o rechace. Los
-    # hooks de PROD sólo los puede leer un job aprobado hacia production.
+    # pausa en "Waiting for review" hasta que alguien apruebe o rechace.
     environment: production
     # Evita dos deploys a PROD pisándose. No ordena la cola de aprobaciones:
     # si quedan dos corridas esperando, la vieja hay que rechazarla a mano.
@@ -234,39 +225,30 @@ jobs:
       group: deploy-prod
       cancel-in-progress: false
     steps:
-      # Acá el &ref= importa más que en QA: entre que la corrida queda esperando
-      # y alguien la aprueba pueden pasar horas, y main se mueve. Sin el ref,
-      # se aprobaría el commit A y a PROD subiría lo último que haya.
-      - name: Disparar el deploy de PROD en Render, del commit aprobado
+      # La MISMA imagen que se desplegó en QA: se promueve lo que se verificó.
+      - name: Deploy de la MISMA imagen a PROD
+        shell: bash
         env:
           HOOK_API: ${{ secrets.RENDER_HOOK_API_PROD }}
           HOOK_FRONT: ${{ secrets.RENDER_HOOK_FRONT_PROD }}
         run: |
-          curl -fsS --max-time 30 -o /dev/null "$HOOK_API&ref=$GITHUB_SHA"
-          curl -fsS --max-time 30 -o /dev/null "$HOOK_FRONT&ref=$GITHUB_SHA"
+          IMG_API="ghcr.io/candelariaarolon/ingsoft3-tp01-backend:sha-${{ github.sha }}"
+          IMG_FRONT="ghcr.io/candelariaarolon/ingsoft3-tp01-frontend:sha-${{ github.sha }}"
+          curl -fsS --max-time 30 --get --data-urlencode "imgURL=$IMG_API" "$HOOK_API"
+          curl -fsS --max-time 30 --get --data-urlencode "imgURL=$IMG_FRONT" "$HOOK_FRONT"
 
-      - name: Smoke test de PROD, espera a que corra este commit
+      - name: Smoke test PROD (espera a que PROD responda)
         shell: bash
         env:
           URL_API: https://curatta-api-prod.onrender.com
           URL_FRONT: https://curatta-front-prod.onrender.com
         run: |
-          for i in $(seq 1 45); do
-            # Mismo smoke que QA: todos los chequeos dentro del if, para que un
-            # timeout del cold start cuente como "todavía no" y no corte el paso.
-            # Exige el commit en la api Y en el front: cada uno se despliega con su
-            # propio hook, y si uno no se desplegó, el otro solo no alcanza.
-            COMMIT=""; FRONT=""
-            if COMMIT=$(curl -fsS --max-time 10 "$URL_API/api/health" | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p') \
-               && [ "$COMMIT" = "$GITHUB_SHA" ] \
-               && FRONT=$(curl -fsS --max-time 10 "$URL_FRONT/health" | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p') \
-               && [ "$FRONT" = "$GITHUB_SHA" ] \
-               && curl -fsS --max-time 10 -o /dev/null "$URL_API/api/health/db" \
-               && curl -fsS --max-time 10 -o /dev/null "$URL_FRONT/" \
-               && curl -fsS --max-time 10 -o /dev/null "$URL_FRONT/api/health/db"; then
-              echo "✅ PROD corre $GITHUB_SHA en la api y en el front, y la base responde"; exit 0
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 10 "$URL_API/api/health" > /dev/null \
+               && curl -fsS --max-time 10 "$URL_API/api/health/db" > /dev/null \
+               && curl -fsS --max-time 10 "$URL_FRONT/" > /dev/null; then
+              echo "✅ PROD responde (API + BD + front)"; exit 0
             fi
-            echo "vuelta $i: api ${COMMIT:-sin respuesta}, front ${FRONT:-sin respuesta}, espero $GITHUB_SHA"
             sleep 20
           done
-          echo "❌ PROD no quedó corriendo $GITHUB_SHA a tiempo"; exit 1
+          echo "❌ PROD no respondió a tiempo"; exit 1
