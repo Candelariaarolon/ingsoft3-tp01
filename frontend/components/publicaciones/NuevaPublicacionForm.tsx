@@ -123,7 +123,7 @@ export default function NuevaPublicacionForm() {
         disabled={enviando}
         className="w-full rounded-sm border border-negro bg-negro px-6 py-3 text-sm text-crema transition-opacity duration-300 ease-in-out disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {enviando ? "Publicando…" : "Publicar"}
+        {enviando ? "Subiendo…" : "Subir prenda"}
       </button>
     </form>
   );
