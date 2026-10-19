@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   // El mismo alias "@/..." que usa tsconfig.json, para que los tests puedan
@@ -9,6 +9,9 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // Los specs de Playwright (e2e/) los corre Playwright, no vitest: sin esto
+    // vitest los agarra por el nombre *.spec.js y rompe build-frontend.
+    exclude: [...configDefaults.exclude, "e2e/**"],
     coverage: {
       provider: "v8",
       // json-summary deja coverage-summary.json, que es lo que el pipeline lee

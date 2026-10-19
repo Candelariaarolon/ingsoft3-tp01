@@ -63,7 +63,7 @@ export default function NuevaPublicacionForm() {
   return (
     <form onSubmit={onSubmit} className="space-y-6">
       <div>
-        <label className="mb-2 block text-[12px] uppercase tracking-[0.2em] text-negro/60">
+        <label htmlFor="foto" className="mb-2 block text-[12px] uppercase tracking-[0.2em] text-negro/60">
           Foto
         </label>
         {foto && (
@@ -75,6 +75,7 @@ export default function NuevaPublicacionForm() {
           />
         )}
         <input
+          id="foto"
           type="file"
           accept="image/*"
           onChange={onFotoChange}
@@ -83,10 +84,11 @@ export default function NuevaPublicacionForm() {
       </div>
 
       <div>
-        <label className="mb-2 block text-[12px] uppercase tracking-[0.2em] text-negro/60">
+        <label htmlFor="nombre" className="mb-2 block text-[12px] uppercase tracking-[0.2em] text-negro/60">
           Nombre
         </label>
         <input
+          id="nombre"
           value={nombre}
           onChange={(e) => setNombre(e.target.value)}
           placeholder="Ej: Campera de jean talle M"
@@ -95,10 +97,11 @@ export default function NuevaPublicacionForm() {
       </div>
 
       <div>
-        <label className="mb-2 block text-[12px] uppercase tracking-[0.2em] text-negro/60">
+        <label htmlFor="precio" className="mb-2 block text-[12px] uppercase tracking-[0.2em] text-negro/60">
           Precio
         </label>
         <input
+          id="precio"
           type="number"
           min={1}
           step={1}
@@ -109,7 +112,11 @@ export default function NuevaPublicacionForm() {
         />
       </div>
 
-      {error && <p className="text-[13px] text-red-700">{error}</p>}
+      {error && (
+        <p className="text-[13px] text-red-700" role="alert">
+          {error}
+        </p>
+      )}
 
       <button
         type="submit"
