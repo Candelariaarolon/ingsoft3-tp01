@@ -101,11 +101,13 @@ export default function PublicacionTile({
         {editando ? (
           <div className="space-y-2">
             <input
+              aria-label={`Nombre de ${publicacion.nombre}`}
               value={nombre}
               onChange={(e) => setNombre(e.target.value)}
               className="w-full rounded-sm border border-negro/20 bg-blanco px-2.5 py-1.5 text-[13px]"
             />
             <input
+              aria-label={`Precio de ${publicacion.nombre}`}
               type="number"
               min={1}
               step={1}
@@ -136,6 +138,7 @@ export default function PublicacionTile({
               type="button"
               onClick={eliminar}
               disabled={procesando}
+              aria-label={`Eliminar ${publicacion.nombre}`}
               className="text-negro/45 underline underline-offset-4 hover:text-negro disabled:opacity-50"
             >
               Eliminar
@@ -145,6 +148,7 @@ export default function PublicacionTile({
               <button
                 type="button"
                 onClick={guardar}
+                aria-label={`Guardar ${publicacion.nombre}`}
                 disabled={procesando}
                 className="text-negro underline underline-offset-4 disabled:opacity-50"
               >
@@ -169,6 +173,7 @@ export default function PublicacionTile({
               <button
                 type="button"
                 onClick={() => setEditando(true)}
+                aria-label={`Editar ${publicacion.nombre}`}
                 disabled={procesando}
                 className="text-negro/45 underline underline-offset-4 hover:text-negro disabled:opacity-50"
               >
@@ -186,6 +191,7 @@ export default function PublicacionTile({
                 type="button"
                 onClick={eliminar}
                 disabled={procesando}
+                aria-label={`Eliminar ${publicacion.nombre}`}
                 className="text-negro/45 underline underline-offset-4 hover:text-negro disabled:opacity-50"
               >
                 Eliminar
