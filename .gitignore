@@ -33,3 +33,9 @@ next-env.d.ts
 # Playwright: los genera cada corrida, no se commitean
 playwright-report/
 test-results/
+
+# Terraform: el estado tiene secretos en texto plano; los tfvars, valores locales
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfvars
