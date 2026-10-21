@@ -7,4 +7,5 @@ Sentry.init({
   environment: window.location.hostname, // de qué sitio vino: QA, producción o localhost
   integrations: [Sentry.browserTracingIntegration()],
   tracesSampleRate: 1.0,
+  traceLifecycle: "static", // transacciones, como las arma Frontend Overview (igual que en el back)
 });
