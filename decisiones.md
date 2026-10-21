@@ -664,3 +664,39 @@ Usé Claude Code (en VS Code) durante todo el TP7. Le permití editar archivos y
 Lo usé para traducir la guía (.NET + Vite, app de tareas sin login) a mi app (Next.js, publicaciones con sesión), escribir los jobs, los specs y los cambios de accesibilidad. Las terceras pruebas de cada suite y la rotura del front (el texto del botón, porque es el tipo de cambio de estética que puede pasar en cualquier equipo) las elegí yo.
 
 Cómo verifiqué lo que produjo: corrí las seis pruebas contra mi compose antes de subirlas y abrí el reporte y una traza; comprobé que vitest siguiera corriendo los 44 unitarios con el `exclude`; probé el hook con `imgURL` a mano en un solo servicio antes de tocar los otros tres; revisé en *Events* de los cuatro servicios que el deploy nombrara la etiqueta de la corrida; y para la corrida roja leí los dos reportes yo misma. Sé qué verifica cada test, contra qué entorno corre y qué pasa si falla: si falla la integración, la e2e no corre; si falla la e2e, `deploy-prod` no pide aprobación.
+
+# TP8: Infraestructura como Código
+
+## 1. Riel y versiones
+
+Riel canónico: **Terraform** (v1.16.6, del tap oficial `hashicorp/tap`) contra **Neon + Render**, las mismas cuentas del TP6. Declaré un entorno nuevo, `preprod`, en `infra/`: proyecto, rol y base en Neon, y api y front en Render corriendo la imagen `sha-03b2c3f…` (la de `v7.0.0`). QA y producción no se tocaron.
+
+Providers fijados, con el `.terraform.lock.hcl` commiteado:
+
+- `kislerdm/neon` **0.18.0**
+- `render-oss/render` **1.9.1**
+
+El estado vive en mi máquina (`infra/terraform.tfstate`, sin bloque `backend`) y lo ignora el `.gitignore`, junto con `.terraform/` y `*.tfvars`. Las tres claves (`NEON_API_KEY`, `RENDER_API_KEY`, `RENDER_OWNER_ID`) están en un archivo local fuera del repo, con permisos `600`.
+
+Adaptaciones a mi stack:
+
+- La conexión va en `DATABASE_URL` como URI de Postgres (la lee Prisma), en lugar de `ConnectionStrings__Default`. Se arma en un `locals` con lo que devuelve Neon.
+- Los dos servicios llevan `JWT_SECRET` (el front firma la sesión y la api la verifica). Es secreto: la variable es `sensitive`, sin default, y el valor está en un tfvars local.
+- No declaro `DNS_RESOLVER`: es para el nginx del front de la cátedra, y mi front es Next.js.
+- Región `ohio`, la misma de mis otros entornos y de la base de preprod.
+- No declaro las variables de Azure OpenAI: la búsqueda por foto no anda en preprod, y no copié secretos de QA.
+- Las tablas las crea la propia imagen de la api al arrancar (`prisma migrate deploy`).
+
+## 2. Problemas encontrados
+
+- **El primer `apply` falló con `400 org_id is required`**: mi cuenta de Neon vive dentro de una organización (la de la facultad), y ahí Neon no crea proyectos sin saber en cuál. Busqué el id con la API de Neon y lo agregué como variable (`neon_org_id`) con default: es un identificador, no un secreto.
+- **El `.gitignore` de la guía tiene un comentario al final de la línea de `*.tfvars`.** En `.gitignore` el `#` sólo es comentario al principio de la línea, así que esa línea no habría ignorado los tfvars. Puse el comentario arriba.
+- **Un cambio a un servicio de Render ya creado** (saqué un `connect_timeout` de la conexión) planeó `~ update in place`, que en el plan gratuito falla. Lo recreé a mano con `terraform apply -replace=render_web_service.api`, como indica la guía.
+- **La guía commitea con `git add -A`**, que habría subido un archivo de notas mío que no va al repo. Agregué sólo `infra/` y el `.gitignore`.
+- **Lo que no estaba medido**: al destruir y recrear los servicios de Render volvieron **las mismas URLs**, con ids nuevos.
+
+## 3. Declaración de uso de IA
+
+Usé Claude Code (en VS Code) durante todo el TP8. A diferencia de los TPs anteriores, esta vez lo autoricé a correr también los comandos de Terraform, los commits, el PR y el merge. Yo cargué las claves en mi archivo local (Claude nunca las vio), hice los cambios a mano en la consola de Neon (borrar `app_preprod` y crear y borrar la base intrusa) y revisé cada paso en una bitácora que fue anotando qué se hizo, por qué y cómo se verificó.
+
+Cómo verifiqué lo que produjo: leí cada `plan` antes de su `apply` (los `3 to add`, `2 to add`, `5 to destroy`, el `1 to change` del update en el lugar); comprobé la idempotencia con la segunda pasada; vi la contraseña en el estado; confirmé en Neon y en Render que el drift se reparó y que la base intrusa no aparecía en el plan; probé `/api/health`, `/api/health/db` y el front después de cada `apply`; y verifiqué que QA y producción siguieran en las dos consolas después del `destroy`. Puedo leer el plan en voz alta y explicar de dónde sale cada dirección.
