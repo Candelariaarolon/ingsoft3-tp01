@@ -8,6 +8,9 @@ export async function register() {
     Sentry.init({
       dsn: process.env.SENTRY_DSN,
       tracesSampleRate: 1.0, // medir todos los pedidos
+      // El SDK 11 manda los tiempos como "spans" sueltos; el tablero Backend Overview
+      // arma su tabla Transactions con transacciones: "static" vuelve a ese formato.
+      traceLifecycle: "static",
     });
   }
 }
