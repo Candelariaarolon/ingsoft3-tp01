@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
+    "@sentry/nextjs": "^11.8.0",
     "bcryptjs": "^3.0.3",
     "jose": "^6.2.8",
     "next": "^14.2.35",
