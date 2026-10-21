@@ -700,3 +700,54 @@ Adaptaciones a mi stack:
 Usé Claude Code (en VS Code) durante todo el TP8. A diferencia de los TPs anteriores, esta vez lo autoricé a correr también los comandos de Terraform, los commits, el PR y el merge. Yo cargué las claves en mi archivo local (Claude nunca las vio), hice los cambios a mano en la consola de Neon (borrar `app_preprod` y crear y borrar la base intrusa) y revisé cada paso en una bitácora que fue anotando qué se hizo, por qué y cómo se verificó.
 
 Cómo verifiqué lo que produjo: leí cada `plan` antes de su `apply` (los `3 to add`, `2 to add`, `5 to destroy`, el `1 to change` del update en el lugar); comprobé la idempotencia con la segunda pasada; vi la contraseña en el estado; confirmé en Neon y en Render que el drift se reparó y que la base intrusa no aparecía en el plan; probé `/api/health`, `/api/health/db` y el front después de cada `apply`; y verifiqué que QA y producción siguieran en las dos consolas después del `destroy`. Puedo leer el plan en voz alta y explicar de dónde sale cada dirección.
+
+# TP9: DevSecOps + Observabilidad
+
+## 1. El PR de Dependabot que mergeé, y por qué
+
+Dependabot vigila tres ecosistemas, todos cada semana: `npm` en `/backend` (mi backend es Next.js, así que es npm y no `nuget`), `npm` en `/frontend` y `github-actions`. Prendí las alertas y las actualizaciones de seguridad. En su primera pasada abrió 13 PRs: 5 por carpeta, que es su tope, porque el repo nunca había tenido Dependabot.
+
+Mergeé el **#64: `postcss` de 8.5.29 a 8.5.31** en el front.
+
+- **Es un patch**: por SemVer trae arreglos sin cambios de comportamiento. Casi todos los demás eran major (`next` 14→16, `@prisma/client` 6→7, `vitest` 4→5, actions 6→7).
+- **Es una herramienta de build**: `postcss` procesa el CSS de Tailwind al construir la imagen y no corre en producción. Toca dos archivos y seis líneas.
+- **Me animé porque el pipeline lo prueba entero**: unitarios y cobertura en el PR; QA, integración y e2e en `main`; y después mi aprobación de producción. Lo prueba el mismo pipeline que en el #58 (`vitest` 5, major) quedó en rojo y frenó una actualización que rompía los tests.
+
+## 2. El monitor, y mi operación más usada y la más lenta
+
+Monitor de UptimeRobot sobre `https://curatta-api-prod.onrender.com/api/health`, cada 5 minutos, con aviso por mail. El endpoint ya contestaba `HEAD` con 200, así que no hubo que tocarlo.
+
+La caída, provocada con *Suspend* en Render:
+
+| Hora | Evento |
+|---|---|
+| 20:27 | *Suspend* de `curatta-api-prod` |
+| 20:31 | Mail **DOWN** |
+| 20:33 | *Resume* |
+| 20:57 | Mail **UP** |
+
+**Tardó 4 minutos en avisarme.** Sin el monitor me habría enterado cuando avisara un usuario. El UP tardó 24 minutos: después del *Resume*, Render deja el servicio dormido y le contesta 503 al monitor mientras arranca (el primer pedido tardó 44 s). Reanudado no es funcionando. Pausé el monitor al terminar, porque despierto todo el mes se come casi toda la cuota de 750 horas que comparten todos mis servicios gratuitos.
+
+Con Sentry en producción (*Backend Overview*, 21-10):
+
+- **La más usada: `GET /api/publicaciones`** (el listado): unas 48 llamadas, P95 de 206 a 263 ms.
+- **La más lenta: `POST /api/publicaciones/buscar`** (la búsqueda por foto): P95 de 7,2 s y P50 de 4,8 s, y hasta 15,9 s medida desde el navegador. Casi todo es la espera a Azure OpenAI Vision: la consulta más lenta a la base tarda 30 ms. Con ese dato abrí la tarjeta **#70** en mi tablero del TP3.
+
+El error de prueba («Falla de prueba del TP9», 6 eventos) quedó en *Issues*. Saqué el endpoint `/api/falla` al terminar, como pide la guía.
+
+## 3. Problemas encontrados y uso de IA
+
+Problemas:
+
+- **`withSentryConfig` ya no está en `@sentry/nextjs`**: la versión 11.8 lo mudó a `@sentry/nextjs/config`, y el build fallaba con `Named export 'withSentryConfig' not found`.
+- **El endpoint de prueba rompía el build**: Next ejecuta un `GET` sin parámetros al compilar, así que la falla a propósito saltaba en el build. Lo marqué con `dynamic = "force-dynamic"`.
+- **Los errores llegaban a Sentry pero la tabla de tiempos quedaba vacía** («Get started with backend tracing»). Corrí la api local contra un receptor falso y vi que el SDK 11 manda los tiempos como `span` sueltos, mientras que la tabla *Transactions* de la guía se arma con transacciones. Lo arreglé con `traceLifecycle: "static"` en back y front (PR #69). Es una adaptación a mi stack: la guía midió con las librerías de .NET y React.
+- **El UP del monitor tardó 24 minutos** (ver arriba).
+- **CodeQL encontró 5 hallazgos**: 4 de *Workflow does not contain permissions* en jobs de `ci.yml` y una contraseña impresa en un `console.log` de `backend/scripts/seed-demo-user.ts`, un script que corro solo a mano. Los analicé pero no los arreglé, porque la tarea pide CodeQL activo, no los hallazgos en cero.
+- **Dependabot reporta 59 alertas abiertas**, casi todas de `next` 14. Se arreglan subiendo a un major, y eso no es un cambio para hacer a ciegas.
+
+Adaptaciones a mi stack: `npm` en vez de `nuget` en `/backend`; `/api/health` en vez de `/health`; `@sentry/nextjs` en los dos lados (iniciado en `instrumentation.ts` y en `sentry.client.config.ts`) en vez de `Sentry.AspNetCore` y `@sentry/react`.
+
+**Uso de IA.** Usé Claude Code (en VS Code) en todo el TP9, siguiendo el orden del video de la clase. Lo autoricé a correr comandos, escribir el código de Sentry, commitear, abrir y mergear los PRs, prender Dependabot y CodeQL por la API de GitHub y crear el issue #70. Las aprobaciones de producción, la cuenta y los proyectos de Sentry, la variable `SENTRY_DSN` en Render, el monitor, la caída y el agregado de la tarjeta al tablero los hice yo. El DSN del back nunca pasó por el chat.
+
+Cómo lo verifiqué: compilé y corrí los tests de back y front antes de cada PR; comprobé con un receptor falso qué mandaba Sentry antes y después del arreglo; confirmé que el JavaScript de producción traía el DSN del front; vi el error, la tabla y las consultas en Sentry con mis propios pedidos; y crucé las horas del monitor con los *Events* de Render (suspendido y reanudado, sin ningún deploy en el medio). Puedo mostrar cada pieza funcionando y explicar qué mira y qué no.
