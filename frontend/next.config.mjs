@@ -1,3 +1,5 @@
+import { withSentryConfig } from "@sentry/nextjs/config";
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "standalone",
@@ -8,4 +10,5 @@ const nextConfig = {
   // (httpOnly) funciona sin CORS ni SameSite=None.
 };
 
-export default nextConfig;
+// withSentryConfig mete sentry.client.config.ts en el JavaScript que baja el navegador.
+export default withSentryConfig(nextConfig, { silent: true });
