@@ -371,19 +371,13 @@ Cómo verifiqué lo que produjo: leí qué comprueba cada `expect`; rompí a pro
 
 ## 1. El artefacto: por qué se publica sólo con la verificación en verde
 
-Hasta el TP5 el pipeline verificaba y no dejaba nada: la imagen nacía y moría en el runner. Ahora cada merge a `main` publica las dos imágenes en `ghcr.io`, etiquetadas con el commit que las produjo (`sha-<commit>`).
+Hasta el TP5 el pipeline probaba todo pero no guardaba nada: la imagen se armaba en el runner y se tiraba al terminar. Ahora, cada vez que algo se mergea a main, las dos imágenes se suben a ghcr.io con el commit que las generó como etiqueta (sha-<commit>). Esto significa que si una imagen está en el registry, es porque pasó los tests. Para eso no agregué ningún control nuevo. Alcanza con tres cosas que ya se encadenan solas:
 
-Que en el registry sólo haya imágenes verificadas no depende de un control nuevo, sino de tres cosas encadenadas:
-
-1. **Nada entra a `main` sin verde**: `build-backend` y `build-frontend` son required checks desde el TP4, y desde el TP5 incluyen el umbral de cobertura.
-2. **Sólo `main` publica**: el `push:` del paso que publica vale `github.event_name == 'push' && github.ref == 'refs/heads/main'`. En un PR el paso construye la imagen (eso verifica que la imagen final compila), pero no la sube. Puse la condición en el paso que publica y no sólo en el disparador del workflow: si un día agrego otra rama al `on:`, no publica igual.
-3. **Publicar es el último paso del mismo job que corre los tests.** No hay ningún `if` que diga «si los tests pasaron»: los pasos corren en orden y el job se corta en el primer error, así que si los tests fallan, el paso de publicar nunca llega a ejecutarse. Por eso moví el build de la imagen final del principio del job (donde estaba en el TP4) al final, y los pasos que publican no llevan `!cancelled()` (el reporte de cobertura sí, a propósito).
+1. A main no entra nada en rojo. build-backend y build-frontend son checks obligatorios desde el TP4, y desde el TP5 también controlan la cobertura.
+2. Sólo main publica. En un PR la imagen se construye para ver que compila, pero no se sube. 
+3. Publicar es lo último que hace el job, después de los tests. Los pasos corren en orden y el job se corta en el primer error. Si fallan los tests, el paso que publica nunca llega a correr. Por eso moví el build de la imagen final del principio del job al final.
 
 Si se publicara igual con los tests en rojo, estar en el registry dejaría de significar «esto pasó la verificación», y el registry sería un depósito de cosas que alguien construyó alguna vez.
-
-**Lo que la cadena no garantiza**: protege lo que publica *el pipeline*, no lo que físicamente puede entrar. Yo podría hacer `docker push` a mano desde mi máquina con mi token y pisar un tag `sha-…`, porque un tag es un nombre que se puede mover. Lo que identifica una imagen de forma inmutable es su **digest** (`sha256:…`, el hash del contenido).
-
-`permissions: packages: write` está declarado **por job** y no a nivel workflow: a nivel workflow reemplazaría el default de todos los jobs, y sólo el que publica necesita escribir paquetes (mínimo privilegio). No hizo falta ningún secret: el `GITHUB_TOKEN` lo crea GitHub para cada corrida y vence con el job.
 
 ## 2. Cómo me adapté al registry
 
@@ -418,10 +412,6 @@ La guía asume .NET y un front servido por nginx. Mi app es Next.js en los dos l
   - en el front, `BACKEND_URL` (con `http://backend:4000` por defecto, que es lo que usa compose);
   - en el back, `DATABASE_URL`, `JWT_SECRET` y las credenciales de Azure OpenAI.
 
-Por eso la misma imagen del front sirve en QA y en PROD, y cada una habla con su api. Es lo que va a permitir el TP7.
-
-El navegador sigue hablándole sólo al front (mismo origen), así que la cookie de sesión `httpOnly` funciona sin CORS. Probé con `docker compose` el registro, el login (la cookie llega al navegador), `/api/auth/me`, las publicaciones, una página protegida, el logout y un cuerpo de 3 MB, todo pasando por el proxy. Los 44 tests del front pasan y la cobertura subió a 96,36 % de líneas y 100 % de ramas.
-
 ## 5. Proveedor y contrato
 
 Usé **Render** para los cuatro servicios (api y front, en QA y en PROD) y **Neon** para las bases. Cumplo los cinco puntos del contrato del TP así:
@@ -438,19 +428,17 @@ Implementé **Continuous Delivery**: todo cambio que entra a `main` y pasa la ve
 
 ## 7. La cadena: `needs`, `if`, environments y secrets
 
-```
-build-backend ─┐
-               ├─> deploy-qa (if: main, environment: qa) ─> deploy-prod (environment: production, concurrency)
-build-frontend ┘
-```
+Es una cadena: primero build, después QA, después PROD con mi aprobación. Si algo falla se corta, sólo despliega main, y cada entorno tiene sus propios secrets. Funciona como una fila: cada paso arranca sólo si el anterior salió bien. 
 
-- **`needs`** arma la cadena: sin los dos builds en verde no hay deploy a QA, y sin QA corriendo el commit nuevo no hay deploy a PROD.
-- **`if: github.ref == 'refs/heads/main'`** en `deploy-qa`: los PR verifican pero no despliegan. `deploy-prod` no repite el `if`: depende de `deploy-qa`, así que en un PR tampoco corre (en los PR los dos salen *skipped*).
-- **`environment`**: cada job de deploy declara su entorno, y con eso hereda sus secrets, sus reglas de protección y queda en el historial de Deployments.
-- **`&ref=$GITHUB_SHA`** en cada hook: se despliega el commit que el pipeline verificó, no la punta de `main`. En PROD importa más todavía: entre que la corrida queda esperando y yo apruebo pueden pasar horas, y `main` se puede mover.
-- **`concurrency: deploy-prod`**: nunca dos deploys a PROD a la vez. No ordena la cola de aprobaciones: si quedaran dos corridas esperando, la vieja la rechazo a mano, porque aprobarla haría retroceder a PROD.
+- needs es el orden de la fila. Si los builds fallan, no se despliega a QA. Si QA falla, no se despliega a PROD.
+- if hace que sólo main despliegue. En un PR se corren los tests, pero no se despliega nada. Alcanza con ponerlo en QA: como PROD depende de QA, si QA no corre, PROD tampoco.
+- environment le dice a cada job a qué entorno va (QA o producción). Así toma los secrets de ese entorno, respeta sus reglas (por ejemplo, PROD necesita que yo lo apruebe) y queda registrado en el historial de deploys.
+- $GITHUB_SHA asegura que se despliega exactamente el commit que se testeó. Importa porque entre que PROD queda esperando y yo lo apruebo pueden pasar horas, y en ese tiempo puede entrar código nuevo a main que todavía nadie testeó.
+- concurrency evita dos deploys a PROD al mismo tiempo. Si quedan dos esperando aprobación, rechazo el viejo a mano, porque si lo aprobara PROD volvería a una versión anterior.
 
-**Alcance de los secrets**: los deploy hooks son secrets **de environment**, no del repo. `RENDER_HOOK_*_QA` sólo los ve un job con `environment: qa`, y `RENDER_HOOK_*_PROD` sólo un job con `environment: production`, que además está pausado hasta que alguien lo aprueba: sin aprobación, nadie los lee. Si estuvieran en el repo, cualquier job (incluido uno de un PR) podría desplegar a producción. Los cargué con `gh secret set` sin `--body`, para que la URL no quede en el historial de la terminal. Las cadenas de conexión a Neon y los `JWT_SECRET` viven sólo en las variables de cada servicio de Render.
+Los secrets: Los links para desplegar en Render están guardados en cada entorno, no en el repo en general. Los de QA sólo los ve el job de QA, y los de PROD sólo el job de PROD, que encima no arranca hasta que yo lo apruebo. Si estuvieran a nivel repo, cualquier job, incluso uno de un PR, podría desplegar a producción.
+
+Además los cargué de forma que no queden guardados en el historial de la terminal. Las claves de la base de datos (Neon) y el JWT_SECRET no pasan por GitHub: están sólo en la configuración de cada servicio en Render.
 
 ## 8. Qué miro antes de aprobar un deploy a PROD
 
@@ -461,20 +449,18 @@ Antes de aprobar miro:
 4. El cambio funcionando en QA, mirándolo yo en la URL.
 5. Si hay una corrida más nueva esperando: en ese caso rechazo la vieja.
 
-**Lo que mi aprobador no puede ver**: si los usuarios de PROD están teniendo errores ahora (no tengo métricas ni logs centralizados), si el cambio funciona con datos reales (QA tiene datos de prueba), y si la configuración de PROD (variables, hooks) está bien cargada. Eso último me pasó: ver la sección de problemas.
-
-**El rechazo**: rechacé la corrida del commit `0f5e555` porque todavía no había un deploy a PROD completo y verificado y no había comprobado que los hooks de PROD apuntaran a los servicios de PROD. Después de rechazar, comparé el `srv-` de cada hook con el de su servicio.
-
 ## 9. Qué prueba el smoke y qué no
 
-El smoke reintenta hasta 45 veces cada 20 segundos (unos 15 minutos), porque Render tarda en construir y el plan gratis duerme los servicios: un `curl` seco daría falsos rojos. En cada vuelta exige todo esto a la vez, y si en 15 minutos no lo consigue, el job queda rojo:
+El smoke es un chequeo rápido que corre después de cada deploy para ver si el sistema quedó vivo.
 
-- que la **api** corra el commit verificado (`/api/health` devuelve `RENDER_GIT_COMMIT`);
-- que el **front** corra el commit verificado (`/health` del front, fuera de `/api` para que no lo conteste el proxy);
-- que la api llegue a la base (`/api/health/db`);
-- que el front sirva la página y llegue a la api y a la base a través del proxy.
+Por qué reintenta: Render tarda en construir y en el plan gratis los servicios se duermen. Si probara una sola vez, fallaría aunque todo estuviera bien. Por eso prueba cada 20 segundos durante unos 15 minutos. Si en ese tiempo no anda, el job queda en rojo.
 
-Exigir el commit no está en el smoke de la guía (que lo marca como opcional en el TP6 y obligatorio en el TP7). Lo agregué porque mientras Render construye sigue sirviendo la versión anterior con 200, y un smoke que sólo mira que conteste da verde contra la versión vieja. Primero lo hice sólo en la api, y lo extendí al front cuando un hook mal cargado dejó el front de PROD sin actualizar con el job en verde.
+Qué revisa:
+
+que la api y el front estén corriendo el commit nuevo;
+que la api llegue a la base de datos;
+que el front cargue y se comunique con la api.
+Por qué reviso el commit: mientras Render construye la versión nueva, sigue mostrando la vieja y responde OK. Si sólo mirara que conteste, daría verde con la versión vieja. 
 
 **Lo que no prueba**: que la funcionalidad ande (no hace un login ni una búsqueda), que la sesión funcione (un `JWT_SECRET` distinto entre front y back deja el health en 200 y el login roto, me pasó en QA), que Azure OpenAI responda, ni que el entorno siga sano después del smoke.
 
@@ -496,50 +482,40 @@ El pipeline publica en `ghcr.io` la imagen que pasó los tests, pero Render no l
 - **La api de PROD no arrancaba (`P1001: Can't reach database server`).** Había un carácter de más en la contraseña de la `DATABASE_URL` de PROD. El error aparecía un segundo después de intentar conectarse, así que no era Neon tardando en despertar, sino la conexión rechazada. Además agregué `connect_timeout=15` a las dos URIs: Neon suspende el cómputo a los ~5 minutos sin uso, y Prisma espera sólo 5 segundos por defecto.
 - **El front de QA no reconocía la sesión.** El login andaba, pero las páginas protegidas me mandaban al login. Mi front verifica la cookie del lado del servidor, así que necesita el mismo `JWT_SECRET` que el backend de su entorno. Lo había editado en Render sin redesplegar, y con Auto-Deploy en Off una variable nueva no se aplica hasta el próximo deploy. Es un caso de «el build en verde, el servicio Live y el entorno roto»: `/api/health` daba 200.
 - **502 del front a través del proxy.** Las api estaban dormidas (el plan gratis las duerme a los 15 minutos) y tardaron ~32 s en despertar; mientras tanto el proxy devolvía 502. Es la razón por la que el smoke reintenta.
-- **El primer smoke de QA cortó en la primera vuelta.** GitHub Actions corre los scripts con `bash -e -o pipefail`, y yo había dejado el primer `curl` fuera del `if`: el timeout del cold start abortaba el paso en vez de dejar que el loop reintentara. Lo corregí poniendo todos los chequeos dentro de la condición, como en la guía, y lo verifiqué corriendo el script con esas mismas opciones contra un servicio que no contesta, uno que corre otro commit y uno que corre el esperado.
-- **Aprobé por error el primer deploy a PROD y cancelé el workflow.** Cancelar no deshizo nada: el hook ya había llegado a Render y PROD quedó con el commit nuevo. Una vez disparado el hook, la única vuelta atrás es el rollback (disparar el hook con el sha anterior). No hizo falta, porque ese commit sólo cambiaba `ci.yml` y la app era la misma.
-
-- **El front de PROD no se actualizaba y el job daba verde.** El secret `RENDER_HOOK_FRONT_PROD` tenía cargado el hook de la api (al usar `gh secret set` de a uno, el portapapeles todavía tenía el anterior). El pipeline llamaba dos veces a la api y ninguna al front, y el smoke, que en ese momento sólo comparaba el commit de la api, daba verde. Lo noté abriendo PROD y viendo el texto viejo. Es exactamente el riesgo que había escrito en el motivo del rechazo. Lo corregí recargando el secret y haciendo que el smoke exija el commit también en el front.
 - **Las fotos de la landing nunca se habían subido al repo.** La página pedía siete imágenes de `/productos/` que estaban sólo en mi carpeta original del proyecto: cuando armé la app en el TP1 se copiaron las texturas de `public/` pero no los productos, y en local, en compose y en los dos entornos se veían rotas. Lo noté recién cuando la landing quedó pública en PROD. Subí sólo las siete que usa la página.
 - **Render tuvo un incidente propio** («Builds are not starting in all regions») y el build de QA quedó trabado. Cancelé el build en Render y volví a correr el job desde GitHub (*Re-run failed jobs*): mismo commit, mismo pipeline.
 
-## 13. Qué deployment pattern usaría en una producción real
+## 13. Deployment pattern en  producción real y Plan de rollback
 
-Hoy cada deploy es un **recreate**: el plan gratis tiene una sola instancia por servicio, y mientras Render cambia la versión hay un rato en que el servicio no atiende (lo vi como 502 en el front).
+Hoy uso recreate: Render apaga la versión vieja y prende la nueva. Mientras cambia, la app no responde un rato (lo vi como error 502).
 
-Para Curatta con usuarios reales usaría **blue-green con feature flags**:
+Con usuarios reales usaría blue-green junto con feature flags:
 
-- **Blue-green** para la infraestructura: dos entornos de PROD completos, y el tráfico pasa del viejo al nuevo de una vez, cuando el nuevo ya pasó el smoke. El rollback es volver el switch: segundos, en vez del minuto que tarda hoy reconstruir. Cuesta el doble de infraestructura, pero Curatta es chica y el beneficio es no cortar a nadie mientras compra o publica.
-- **Feature flags** para lo riesgoso del producto, sobre todo el matching con Azure OpenAI: un cambio en cómo se comparan las prendas lo desplegaría apagado, lo prendería primero para mí y después para un porcentaje de usuarias, y lo apagaría en segundos si los resultados empeoran, sin redesplegar.
+Blue-green: tengo dos PROD, la vieja y la nueva, y paso el tráfico a la nueva cuando ya está probada. Si falla, vuelvo a la vieja en segundos. Cuesta el doble, pero nadie se queda sin la app.
+Feature flags: para lo riesgoso, como la comparación de prendas con IA. Subo el cambio apagado, lo prendo para pocas usuarias y, si anda mal, lo apago sin redesplegar.
+No elijo canary porque necesita métricas para comparar versiones, y hoy no las tengo (llegan en el TP9). No elijo rolling porque tengo una sola instancia.
 
-**Por qué no canary**: para decidir si el canario «sangra» hacen falta métricas por versión (errores, latencia, cuántas búsquedas terminan en un contacto por WhatsApp). Hoy no tengo nada de eso: es lo que me falta, y llega con el TP9. Sin esa observabilidad, un canary es ruleta.
+Rollback: Volver atrás es lo mismo que desplegar, pero con un commit anterior:
 
-**Cuidado con la base**: en blue-green las dos versiones comparten la base, así que las migraciones tienen que ser compatibles hacia atrás (agregar columnas sí, borrar o renombrar no, hasta que la versión vieja ya no exista).
+Busco en Deployments el último commit que andaba bien.
+Llamo a los deploy hooks de PROD con ese commit (&ref=<sha>).
+Espero a que Render lo muestre como Live y reviso que /health devuelva ese commit.
+Lo probé de verdad el 14/10: volví PROD de 3907483 a ec41210 y las fotos de la landing desaparecieron, como esperaba. La api tardó 45,8 s y el front 51,6 s, así que el rollback completo tomó menos de un minuto. Ese es mi tiempo de recuperación (MTTR, métrica DORA). Si Render está lento, puede tardar más.
 
-## 14. Plan de rollback, medido
+Lo que el rollback no arregla:
 
-Como cada deploy se dispara con el commit explícito (`&ref=<sha>`), volver atrás es **el mismo mecanismo con el sha anterior**:
-
-1. Ver en *Deployments* → `production` (o en Render → *Deploys*) cuál fue el último deploy bueno, y su sha.
-2. Copiar de Render los deploy hooks de `curatta-api-prod` y `curatta-front-prod` (el secret de GitHub no se puede volver a leer). Los cargo con `read -rs` para que no queden en el historial.
-3. Llamar a los dos hooks con `&ref=<sha anterior>`.
-4. Esperar a que Render muestre ese commit como *Live* en los dos servicios, y comprobar `/api/health` y `/health`, que tienen que devolver el sha anterior.
-
-**Lo hice una vez de verdad** (el 14/10): tomé como «deploy malo» el de las fotos de la landing (`3907483`) y volví PROD a `ec41210`. El efecto se veía: PROD quedó sin las fotos. Disparé los hooks a las **20:03:05**, y en Render → *Deploys* los dos servicios quedaron *Live* en `ec41210`: la api en **45,8 s** y el front en **51,6 s**. El rollback completo tardó **menos de un minuto**. Es mi tiempo de recuperación (MTTR, la cuarta métrica DORA), medido con el servicio despierto y la caché de build de Render disponible. Con la caché fría o Render lento (como en su incidente de ese mismo día) tardaría varios minutos más.
-
-La otra vía es re-correr el job `deploy-prod` de la corrida vieja desde *Actions*: vuelve a pedir la aprobación y GitHub sólo deja hacerlo hasta 30 días después. El hook con el sha funciona siempre.
-
-**Lo que el rollback no deshace: los datos.** Volver el código no vuelve la base. Si una versión hubiera corrido una migración que borra una columna, o hubiera escrito datos con un formato nuevo, el rollback dejaría código viejo contra una base nueva. Para eso harían falta migraciones compatibles hacia atrás (la regla de la sección anterior) y poder restaurar la base: Neon tiene *point-in-time restore*, pero en el plan gratis la ventana es corta. Además, después de un rollback a mano, `main` sigue teniendo el commit malo: el próximo merge lo volvería a llevar a PROD si no se revierte también en el código.
+Los datos. Volver el código no vuelve la base. Si una versión borró una columna, sigue borrada.
+main. El commit malo sigue ahí. Si no lo revierto en el código, el próximo merge lo vuelve a subir.
 
 ## 15. Declaración de uso de IA
 
 Usé Claude Code (en VS Code) durante todo el TP6. Le permití editar archivos y correr comandos de verificación (tests, `docker compose`, `curl` contra QA y PROD, `gh` para leer el estado de las corridas), pero todos los commits, pushes, PRs, merges, aprobaciones, rechazos, el rollback y el tag los hice yo, con mis mensajes. Las credenciales (cadenas de conexión, `JWT_SECRET`, deploy hooks) las cargué yo en Render y en GitHub.
 
-Lo usé para traducir la guía (.NET + nginx) a mi stack (Next.js en los dos lados), escribir el proxy del front, los endpoints de salud, los jobs de deploy y el smoke, y diagnosticar los problemas de la sección 12. El motivo del rechazo y los criterios de aprobación los escribí yo.
+Lo usé para traducir la guía (.NET + nginx) a mi stack (Next.js en los dos lados), escribir los endpoints de salud, los jobs de deploy, y diagnosticar los problemas que me encontraba. El motivo del rechazo y los criterios de aprobación los escribí yo.
 
-Cómo verifiqué lo que produjo: probé cada cambio de la app con `docker compose` antes de subirlo (login, sesión, proxy, un cuerpo de 3 MB); corrí el smoke en mi máquina con las mismas opciones de bash que usa GitHub (`-e -o pipefail`), contra un servicio que no contesta, uno que corre otro commit y uno que corre el esperado; comprobé con datos que las dos bases y los dos `JWT_SECRET` estuvieran separados; comparé el `srv-` de cada hook con el de su servicio; y miré PROD con mis ojos después de cada aprobación. Así encontré el hook del front mal cargado, que el pipeline no detectaba. Dos veces la primera versión de la IA estuvo mal (el smoke que cortaba en el primer timeout, y un smoke que no miraba el front), y las dos las encontré probando, no leyendo.
+Cómo verifiqué lo que produjo: probé cada cambio de la app con antes de subirlo. corrí el smoke en mi máquina, contra un servicio que no contesta, uno que corre otro commit y uno que corre el esperado; comprobé con datos que las dos bases y los dos `JWT_SECRET` estuvieran separados; comparé el `srv-` de cada hook con el de su servicio; y miré PROD con mis ojos después de cada aprobación. Así encontré el hook del front mal cargado, que el pipeline no detectaba. Dos veces la primera versión de la IA estuvo mal (el smoke que cortaba en el primer timeout, y un smoke que no miraba el front), y las dos las encontré probando.
 
----
+
 
 # TP7: Contenedores en el pipeline, integración y e2e
 
@@ -591,21 +567,26 @@ En el TP6 había agregado esa comparación usando `RENDER_GIT_COMMIT`, porque la
 
 ## 4. Las dos suites: qué probé, qué no, y por qué
 
-**Integración** (`frontend/e2e/api.spec.js`, sin navegador, contra la api de QA):
-1. Alta + verificación en la base + borrado + verificación.
-2. Nombre vacío → `400`, y la cantidad de publicaciones no cambia.
-3. **Elegida por mí: una publicación vendida no se puede modificar** (crear → marcar vendida → cambiar el precio → `409` → borrar). Si se rompe, una vendedora podría «revender» una prenda ya vendida. Es una regla que se aplica sobre lo que quedó guardado en la base, que es justo lo que un unitario con doble no ve.
+Tengo dos tipos de tests que corren contra QA:
 
-**E2E** (`frontend/e2e/publicaciones.spec.js`, con Chromium, contra el front de QA):
-1. Publicar una prenda (foto, nombre y precio) → aparece en «Mis publicaciones» → eliminarla → ya no está.
-2. Precio en cero → el usuario ve el error → la prenda no aparece en su lista.
-3. **Elegido por mí: editar el precio y que siga al recargar.** Es lo que hace una vendedora seguido, y si no anda, me escribe. Toca la base: después de guardar, recargo la página y busco el precio nuevo.
+**Integración** (`frontend/e2e/api.spec.js`): le hablan directo a la api, sin abrir el navegador.
+1. Creo una publicación, reviso que esté en la base, la borro y reviso que ya no esté.
+2. Si mando una publicación sin nombre, la api la rechaza (`400`) y no se guarda nada.
+3. **(Elegido por mí)** Una prenda vendida no se puede editar: si intento cambiarle el precio, la api responde `409`. Si esto fallara, se podría «revender» algo ya vendido.
 
-Las seis crean su dato con un nombre que no se repite (con la hora adentro) y lo borran, comprobándolo, porque QA es uno solo y lo comparten todas las corridas.
+**E2E** (`frontend/e2e/publicaciones.spec.js`): abren un navegador de verdad y hacen lo mismo que haría una usuaria.
+1. Publico una prenda, aparece en «Mis publicaciones», la borro y desaparece.
+2. Si pongo precio 0, veo el error y la prenda no se publica.
+3. **(Elegido por mí)** Edito el precio, recargo la página y el precio nuevo sigue ahí. Es algo que las vendedoras hacen seguido.
 
-**Qué no puse en cada suite (pirámide)**: las validaciones de email, contraseña, teléfono y precio, y la lógica del matching, ya están en los unitarios del TP5 (milisegundos, sin red). En integración no repito lo que la e2e ya recorre, y en e2e no pongo la búsqueda por foto: depende de Azure OpenAI, tarda y cuesta, y daría tests frágiles por motivos ajenos a mi código. Tampoco pongo el registro: crearía un usuario nuevo en cada corrida, y la app no tiene forma de borrarlo.
+Cada test crea sus propios datos con un nombre único y los borra al final, porque hay un solo QA y lo comparten todas las corridas.
 
-**Cómo se loguean**: a diferencia de la app de la cátedra, en Curatta hay que tener sesión para publicar. Las dos suites usan un usuario de prueba que existe sólo en QA, y su email y contraseña entran por secrets del repositorio (`E2E_EMAIL` y `E2E_PASSWORD`), nunca escritos en el código. Límite: el reporte de Playwright muestra en texto lo que se escribe en el campo de contraseña, y los artefactos los puede bajar cualquiera con cuenta de GitHub. Es aceptable porque ese usuario es sólo de QA, sin datos reales, y la contraseña no se usa en otro lado.
+**Qué no testeo acá y por qué:**
+- **Las validaciones y el matching:** ya están en los tests unitarios del TP5, que son más rápidos.
+- **La búsqueda por foto:** depende de la IA de Azure, que es lenta y cuesta plata. Los tests fallarían por culpa de Azure y no de mi código.
+- **El registro:** cada corrida crearía un usuario nuevo, y la app no tiene forma de borrarlo.
+
+**Login:** en Curatta hay que estar logueada para publicar. Los tests usan un usuario de prueba que existe sólo en QA, y su email y contraseña están guardados como secrets en GitHub (`E2E_EMAIL` y `E2E_PASSWORD`), no en el código. El único problema es que el reporte de Playwright muestra la contraseña. No es grave, porque es un usuario de prueba sin datos reales.
 
 ## 5. Integración y e2e no son lo mismo: el par verde/rojo
 
@@ -697,9 +678,9 @@ Adaptaciones a mi stack:
 
 ## 3. Declaración de uso de IA
 
-Usé Claude Code (en VS Code) durante todo el TP8. A diferencia de los TPs anteriores, esta vez lo autoricé a correr también los comandos de Terraform, los commits, el PR y el merge. Yo cargué las claves en mi archivo local (Claude nunca las vio), hice los cambios a mano en la consola de Neon (borrar `app_preprod` y crear y borrar la base intrusa) y revisé cada paso en una bitácora que fue anotando qué se hizo, por qué y cómo se verificó.
+Usé Claude Code (en VS Code) durante todo el TP8. Yo cargué las claves en mi archivo local (Claude nunca las vio), hice los cambios a mano en la consola de Neon (borrar `app_preprod` y crear y borrar la base intrusa) y revisé cada paso en una bitácora que fue anotando qué se hizo, por qué y cómo se verificó.
 
-Cómo verifiqué lo que produjo: leí cada `plan` antes de su `apply` (los `3 to add`, `2 to add`, `5 to destroy`, el `1 to change` del update en el lugar); comprobé la idempotencia con la segunda pasada; vi la contraseña en el estado; confirmé en Neon y en Render que el drift se reparó y que la base intrusa no aparecía en el plan; probé `/api/health`, `/api/health/db` y el front después de cada `apply`; y verifiqué que QA y producción siguieran en las dos consolas después del `destroy`. Puedo leer el plan en voz alta y explicar de dónde sale cada dirección.
+Cómo verifiqué lo que produjo: leí cada `plan` antes de su `apply` (los `3 to add`, `2 to add`, `5 to destroy`, el `1 to change` del update en el lugar); comprobé la idempotencia con la segunda pasada; vi la contraseña en el estado; confirmé en Neon y en Render que el drift se reparó y que la base intrusa no aparecía en el plan; probé `/api/health`, `/api/health/db` y el front después de cada `apply`; y verifiqué que QA y producción siguieran en las dos consolas después del `destroy`. 
 
 # TP9: DevSecOps + Observabilidad
 
@@ -748,6 +729,6 @@ Problemas:
 
 Adaptaciones a mi stack: `npm` en vez de `nuget` en `/backend`; `/api/health` en vez de `/health`; `@sentry/nextjs` en los dos lados (iniciado en `instrumentation.ts` y en `sentry.client.config.ts`) en vez de `Sentry.AspNetCore` y `@sentry/react`.
 
-**Uso de IA.** Usé Claude Code (en VS Code) en todo el TP9, siguiendo el orden del video de la clase. Lo autoricé a correr comandos, escribir el código de Sentry, commitear, abrir y mergear los PRs, prender Dependabot y CodeQL por la API de GitHub y crear el issue #70. Las aprobaciones de producción, la cuenta y los proyectos de Sentry, la variable `SENTRY_DSN` en Render, el monitor, la caída y el agregado de la tarjeta al tablero los hice yo. El DSN del back nunca pasó por el chat.
+**Uso de IA.** Usé Claude Code (en VS Code) en todo el TP9, siguiendo el orden del video de la clase. Lo autoricé a correr comandos. Yo me encargué de las aprobaciones de producción, la cuenta y los proyectos de Sentry, la variable `SENTRY_DSN` en Render, el monitor, la caída y el agregado de la tarjeta al tablero. El DSN del back nunca pasó por el chat.
 
-Cómo lo verifiqué: compilé y corrí los tests de back y front antes de cada PR; comprobé con un receptor falso qué mandaba Sentry antes y después del arreglo; confirmé que el JavaScript de producción traía el DSN del front; vi el error, la tabla y las consultas en Sentry con mis propios pedidos; y crucé las horas del monitor con los *Events* de Render (suspendido y reanudado, sin ningún deploy en el medio). Puedo mostrar cada pieza funcionando y explicar qué mira y qué no.
+Compilé y corrí los tests de back y front antes de cada PR; comprobé con un receptor falso qué mandaba Sentry antes y después del arreglo; confirmé que el JavaScript de producción traía el DSN del front; vi el error, la tabla y las consultas en Sentry con mis propios pedidos; y crucé las horas del monitor con los *Events* de Render (suspendido y reanudado, sin ningún deploy en el medio). 
